@@ -7,9 +7,13 @@ A multi-line, ANSI-colored statusline renderer for [Claude Code](https://claude.
 ```
 Opus 4.7 (1M context) (H) 1M v1.2.3 | repo (main) | +42 -7 lines | 3A | NOR
 ●●●◐●●●●●● 35% | $1.23 (today $5.67) | 5h 23% (2h 14m) | 7d 57% (5d 8h)
-cache 97% | in: 123.4K out: 7.8K | api wait 30m 00s (50%) | cur 200 in 50.0K read 1.0K write
-agents 2 reviewer-opus-high,coder-sonnet-max | tools Read,Bash | todos 3/7 fix smoke test
+cache 97% | in: 123.4K out: 7.8K | api wait 30m 00s (50%) | agents 2 reviewer-opus-high,coder-sonnet-max
+tools Read,Bash | todos 3/7 fix smoke test | 14:23 ❯ update README sample output
 ```
+
+L3 groups "session-wide consumption" (cache, tokens, api wait) plus the active subagent indicator. L4 groups "live activity & user intent" (currently running tools, todo progress, last prompt). Both lines render conditionally — empty fields drop out.
+
+The `agents …` indicator on L3 is dual-mode: **magenta** while subagent(s) are running (`agents N name1,name2`), **dim** as a fallback showing the most recent subagent_type once they finish — so the field doesn't vanish the moment a subagent completes.
 
 ## Requirements
 
@@ -59,9 +63,9 @@ The script reads 22 fields from the JSON Claude Code pipes to its `statusLine.co
 | `RESET_5H` / `RESET_7D` | `.rate_limits.{five_hour,seven_day}.resets_at` | L2 countdown |
 | `TOTAL_IN_TOKENS` / `TOTAL_OUT_TOKENS` | `.context_window.total_{input,output}_tokens` | L3 `in:` / `out:` |
 | `API_DURATION_MS` | `.cost.total_api_duration_ms` | L3 api wait |
-| `CACHE_READ` / `CACHE_CREATE` / `CUR_INPUT` | `.context_window.current_usage.*` | L3 cache hit + cur detail |
+| `CACHE_READ` / `CACHE_CREATE` / `CUR_INPUT` | `.context_window.current_usage.*` | L3 cache hit (cur detail disabled by default) |
 | `SESSION_ID` | `.session_id` | Today-cost tracker + last-prompt lookup |
-| `TRANSCRIPT_PATH` | `.transcript_path` | L4 agents / tools / todos |
+| `TRANSCRIPT_PATH` | `.transcript_path` | L3 agents · L4 tools · todos |
 
 The full mapping (with paired-disable annotations) lives at the top of [`cc-statusline.sh`](cc-statusline.sh).
 
@@ -71,8 +75,10 @@ The full mapping (with paired-disable annotations) lives at the top of [`cc-stat
 |---|---|
 | L1 | model · ctx-size · version · repo-link · branch · lines · git-stats · vim |
 | L2 | context-bar · cost (session + today) · 5h limit · 7d limit |
-| L3 | cache-hit · tokens in/out · api wait · current-usage detail |
-| L4 | active agents · running tools · todos · last prompt (conditionally rendered) |
+| L3 | cache-hit · tokens in/out · api wait · agents (magenta=running, dim=last seen) |
+| L4 | running tools · todos (with current task) · last prompt (with `❯` marker) — entire line conditionally rendered |
+
+Disabled by default (one-line uncomment to re-enable — see [Customization](#customization)): per-message duration (`DUR`), tokens-per-minute burn rate, and current-usage detail (`cur N in / N read / N write`).
 
 ## Customization
 
@@ -81,7 +87,7 @@ The script is annotated for surgical edits:
 - **Field map at the top** — see which `F[N]` feeds which line.
 - **Inline `# → L<n>` comments** on every variable assignment.
 - **`# INPUTS:` banner** above each `L1`/`L2`/`L3`/`L4` block lists every variable that line consumes.
-- **`Paired-disable note`** above each disabled block (Duration, Burn rate) tells you whether the underlying `F[N]` extraction can be commented out too.
+- **`Paired-disable note`** above each disabled block (Duration, Burn rate, cur-detail) tells you whether the underlying `F[N]` extraction can be commented out too.
 
 To disable a display block:
 
@@ -89,10 +95,10 @@ To disable a display block:
 2. Check the field map — if any `F[N]` is consumed *only* by what you disabled, comment its extraction too.
 3. Re-run the smoke test (`bash test/smoke.sh`) to confirm no regression.
 
-To re-enable the bundled disabled blocks (Duration, Burn rate):
+To re-enable the bundled disabled blocks (Duration, Burn rate, cur-detail):
 
 1. Uncomment the block body.
-2. Inject the produced variable (`$DUR`, `$BURN_PART`) into the desired `L1`–`L4` line.
+2. For `DUR` / `BURN_PART`: inject the produced variable into the desired `L1`–`L4` line. For `cur-detail`: the block already self-appends to `L3` — just uncomment the four lines in place.
 
 ## Testing
 

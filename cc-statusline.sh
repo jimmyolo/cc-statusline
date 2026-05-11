@@ -31,8 +31,8 @@
 # Display layout:
 #   L1: model + ctx-size + version + repo + branch + lines + git-stats + vim
 #   L2: ctx-bar + cost + today-cost + 5h + 7d
-#   L3: cache-hit + tokens + api-wait + cur-token-detail
-#   L4: active-agents + running-tools + todos + last-prompt   (only printed if non-empty)
+#   L3: cache-hit + tokens + api-wait + agents-or-last-agent   (❌ cur-token-detail disabled — see l. ~413)
+#   L4: running-tools + todos + last-prompt   (only printed if non-empty)
 #
 # To disable a display block: comment the block, then check this map — if an
 # F[N] field is consumed ONLY by disabled blocks, comment its assignment too.
@@ -136,6 +136,7 @@ fi
 # Single parse pass to extract all needed signals from the transcript.
 ACTIVE_AGENTS=""
 ACTIVE_AGENT_COUNT=0
+LAST_AGENT=""
 RUNNING_TOOLS=""
 RUNNING_TOOL_COUNT=0
 TODO_DONE=0
@@ -167,6 +168,9 @@ if [ -n "$TRANSCRIPT_PATH" ] && [ -f "$TRANSCRIPT_PATH" ]; then
       RUNNING_TOOL_COUNT=$(wc -l <<< "$TOOLS_RAW" | tr -d ' ')
       RUNNING_TOOLS=$(paste -sd, <<< "$TOOLS_RAW")
     fi
+    # Last Agent invocation, regardless of completion — fallback for the L3
+    # `agents` display when nothing is currently active.
+    LAST_AGENT=$(awk -F'\t' '$2=="Agent" && $3!="" { last=$3 } END { print last }' <<< "$TOOL_USES")
   fi
   # Last TodoWrite invocation → todo progress
   TODO_RAW=$(grep -F '"name":"TodoWrite"' "$TRANSCRIPT_PATH" 2>/dev/null \
@@ -274,11 +278,14 @@ if [ -n "$REMOTE" ]; then
 fi
 
 # ── Context bar ───────────────────────────────────────────────
+# Each cell represents 10%; any partial above a 10%-multiple lights a half-cell.
+# Gives a smooth gradient: 0%=empty, 1-9%=◐, 10%=●, 11-19%=●◐, 20%=●●, ...
 BAR_COLOR=$(color_pct "$PCT")
 BAR_W=10
-HALF_STEPS=$((PCT * BAR_W * 2 / 100))
-[ "$PCT" -gt 0 ] && [ "$HALF_STEPS" -eq 0 ] && HALF_STEPS=1
-FULL=$((HALF_STEPS / 2)); HAS_HALF=$((HALF_STEPS % 2))
+FULL=$((PCT / 10))
+[ "$FULL" -gt "$BAR_W" ] && FULL=$BAR_W
+HAS_HALF=0
+[ "$PCT" -gt 0 ] && [ $((PCT % 10)) -gt 0 ] && [ "$FULL" -lt "$BAR_W" ] && HAS_HALF=1
 EMPTY=$((BAR_W - FULL - HAS_HALF))
 BAR=""
 for i in $(seq 1 $FULL); do BAR="${BAR}${BAR_COLOR}●${RESET}"; done
@@ -410,22 +417,32 @@ else
   L3="${L3}${SEP}${DIM}api wait${RESET} ${CYAN}${API_DUR}${RESET}"
 fi
 
-CUR_IN_FMT=$(fmt_tokens "$CUR_INPUT")
-CACHE_R_FMT=$(fmt_tokens "$CACHE_READ")
-CACHE_C_FMT=$(fmt_tokens "$CACHE_CREATE")
-L3="${L3}${SEP}${DIM}cur${RESET} ${CUR_IN_FMT} ${DIM}in${RESET} ${CACHE_R_FMT} ${DIM}read${RESET} ${CACHE_C_FMT} ${DIM}write${RESET}"
+# Active subagents (MAGENTA), or last invoked subagent_type (DIM) as fallback.
+if [ "$ACTIVE_AGENT_COUNT" -gt 0 ]; then
+  L3="${L3}${SEP}${MAGENTA}agents ${ACTIVE_AGENT_COUNT} ${ACTIVE_AGENTS}${RESET}"
+elif [ -n "$LAST_AGENT" ]; then
+  L3="${L3}${SEP}${DIM}agents ${LAST_AGENT}${RESET}"
+fi
+
+# Current token detail (cur in / read / write) — DISABLED, uncomment to re-enable.
+# Paired-disable note: CUR_INPUT (F[19]) / CACHE_READ (F[17]) / CACHE_CREATE (F[18])
+# are ALSO consumed by the cache hit rate block (l. ~309) — do NOT comment out
+# their F[N] extractions.
+# CUR_IN_FMT=$(fmt_tokens "$CUR_INPUT")
+# CACHE_R_FMT=$(fmt_tokens "$CACHE_READ")
+# CACHE_C_FMT=$(fmt_tokens "$CACHE_CREATE")
+# L3="${L3}${SEP}${DIM}cur${RESET} ${CUR_IN_FMT} ${DIM}in${RESET} ${CACHE_R_FMT} ${DIM}read${RESET} ${CACHE_C_FMT} ${DIM}write${RESET}"
 
 # ══════════════════════════════════════════════════════════════
-# LINE 4: Live activity — agents + tools + todos + last prompt
-# INPUTS: ACTIVE_AGENTS RUNNING_TOOLS TODO_DONE/TODO_TOTAL TODO_CURRENT LAST_PROMPT LAST_PROMPT_TIME
+# LINE 4: Live activity — running tools + todos + last prompt
+# INPUTS: RUNNING_TOOLS TODO_DONE/TODO_TOTAL TODO_CURRENT LAST_PROMPT LAST_PROMPT_TIME
 #         (all derived from TRANSCRIPT_PATH + SESSION_ID + history.jsonl)
-# Note: this line is conditionally printed — only if at least one field is non-empty.
+# Conditionally printed — only if at least one field is non-empty.
 # ══════════════════════════════════════════════════════════════
 L4=""
 add4() { [ -n "$L4" ] && L4="${L4}${SEP}$1" || L4="$1"; }
 
-[ "$ACTIVE_AGENT_COUNT" -gt 0 ] && add4 "${MAGENTA}agents ${ACTIVE_AGENT_COUNT} ${ACTIVE_AGENTS}${RESET}"
-[ "$RUNNING_TOOL_COUNT" -gt 0 ] && add4 "${YELLOW}tools ${RUNNING_TOOLS}${RESET}"
+[ "$RUNNING_TOOL_COUNT" -gt 0 ] && add4 "${DIM}tools${RESET} ${YELLOW}${RUNNING_TOOLS}${RESET}"
 if [ "$TODO_TOTAL" -gt 0 ]; then
   TODO_PART="${CYAN}todos ${TODO_DONE}/${TODO_TOTAL}${RESET}"
   [ -n "$TODO_CURRENT" ] && TODO_PART="${TODO_PART} ${DIM}${TODO_CURRENT:0:40}${RESET}"
@@ -434,7 +451,7 @@ fi
 if [ -n "$LAST_PROMPT" ]; then
   PROMPT_PART=""
   [ -n "$LAST_PROMPT_TIME" ] && PROMPT_PART="${DIM}${LAST_PROMPT_TIME}${RESET} "
-  PROMPT_PART="${PROMPT_PART}${LAST_PROMPT}"
+  PROMPT_PART="${PROMPT_PART}${DIM}❯${RESET} ${LAST_PROMPT}"
   add4 "$PROMPT_PART"
 fi
 

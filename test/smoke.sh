@@ -51,6 +51,29 @@ check "contains api wait line"         'grep -q "api wait" <<< "$plain"'
 check "contains cache hit %"           'grep -q "cache 97%" <<< "$plain"'
 check "contains vim NORMAL marker"     'grep -q "NOR" <<< "$plain"'
 
+# ── Second pass: with a real transcript that has active agents/tools/todos ──
+echo
+echo "Running with active transcript (agents/tools/todos)…"
+TRANSCRIPT_TMP=$(mktemp -t cc-statusline-smoke.XXXXXX.jsonl)
+trap 'rm -f "$TRANSCRIPT_TMP"' EXIT
+cat > "$TRANSCRIPT_TMP" <<'JSONL'
+{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_agent","name":"Agent","input":{"subagent_type":"reviewer-opus-high"}}]}}
+{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_read","name":"Read","input":{"file_path":"/tmp/x"}}]}}
+{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_todo","name":"TodoWrite","input":{"todos":[{"content":"first","status":"completed"},{"content":"second","status":"in_progress"}]}}]}}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_todo","content":"ok"}]}}
+JSONL
+out2=$(jq --arg t "$TRANSCRIPT_TMP" '.transcript_path=$t' "$SAMPLE" | bash "$SCRIPT" 2>/dev/null)
+plain2=$(printf '%s' "$out2" | sed -E 's/\x1b\[[0-9;]*[a-zA-Z]//g; s/\x1b\]8;;[^\x07]*\x07//g')
+
+echo "Output (plain, with transcript):"
+echo "$plain2" | sed 's/^/  | /'
+echo
+
+check "(active) contains agents indicator"  'grep -q "agents 1 reviewer-opus-high" <<< "$plain2"'
+check "(active) contains tools indicator"   'grep -q "tools Read" <<< "$plain2"'
+check "(active) contains todos progress"    'grep -q "todos 1/2" <<< "$plain2"'
+check "(active) contains current todo"      'grep -q "second" <<< "$plain2"'
+
 echo
 echo "Result: $pass passed, $fail failed."
 [ "$fail" -eq 0 ]
