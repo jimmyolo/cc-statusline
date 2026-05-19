@@ -401,16 +401,9 @@ fi
 L3=""
 [ -n "$CACHE_HIT" ] && L3="${CACHE_HIT}"
 
-# Token total = in + out + cache (cache = cache_read + cache_create combined).
-# total_input_tokens / total_output_tokens are session-cumulative from stdin;
-# cache_* are current-turn only (cc-statusline doesn't parse transcript for cumulative cache yet).
 IN_FMT=$(fmt_tokens "$TOTAL_IN_TOKENS")
 OUT_FMT=$(fmt_tokens "$TOTAL_OUT_TOKENS")
-CACHE_TOTAL=$((${CACHE_READ:-0} + ${CACHE_CREATE:-0}))
-CACHE_FMT=$(fmt_tokens "$CACHE_TOTAL")
-TOTAL_TOKENS=$((${TOTAL_IN_TOKENS:-0} + ${TOTAL_OUT_TOKENS:-0} + CACHE_TOTAL))
-TOTAL_FMT=$(fmt_tokens "$TOTAL_TOKENS")
-TOKENS_PART="${DIM}Tokens${RESET} ${BOLD}${TOTAL_FMT}${RESET} ${DIM}(in${RESET} ${CYAN}${IN_FMT}${RESET} ${DIM}out${RESET} ${MAGENTA}${OUT_FMT}${RESET} ${DIM}cache${RESET} ${GREEN}${CACHE_FMT}${DIM})${RESET}"
+TOKENS_PART="${DIM}in:${RESET} ${CYAN}${IN_FMT}${RESET} ${DIM}out:${RESET} ${MAGENTA}${OUT_FMT}${RESET}"
 [ -n "$L3" ] && L3="${L3}${SEP}${TOKENS_PART}" || L3="${TOKENS_PART}"
 
 # Burn rate: (in + out) tokens per minute of session wall time
