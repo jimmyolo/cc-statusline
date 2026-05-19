@@ -310,15 +310,25 @@ for i in $(seq 1 $EMPTY); do BAR="${BAR}${DIM}●${RESET}"; done
 # To re-enable: uncomment below AND inject ${DUR} into the desired L1–L4 line.
 # DUR=$(fmt_dur "$DURATION_MS")
 
-# ── Git file stats (M/A/D counts) — consumed inside the branch block on L1 ──
-# Per AJ-25: M/A/D + session +N/-N line diff are consolidated into the (branch*) parens.
+# ── Git file stats (M/A/D counts + working-tree line diff) — consumed inside (branch*) on L1 ──
+# Per AJ-25 + follow-up: M/A/D file counts + +N/-N line diff inside parens BOTH come from
+# git working-tree state (real-time, resets on commit/revert). Session-cumulative +N/-N
+# from cost JSON renders separately on L3 (see SESSION_LINES below).
 GIT_M=0
 GIT_A=0
 GIT_D=0
+GIT_LINES_ADD=0
+GIT_LINES_DEL=0
 if git rev-parse --git-dir > /dev/null 2>&1; then
   GIT_M=$(git diff --name-only 2>/dev/null | wc -l | tr -d ' ')
   GIT_A=$(git ls-files --others --exclude-standard 2>/dev/null | wc -l | tr -d ' ')
   GIT_D=$(git diff --diff-filter=D --name-only 2>/dev/null | wc -l | tr -d ' ')
+  # Working-tree +N/-N from shortstat (staged + unstaged); untracked file lines not counted.
+  _shortstat=$(git diff HEAD --shortstat 2>/dev/null)
+  GIT_LINES_ADD=$(echo "$_shortstat" | grep -oE '[0-9]+ insertion' | grep -oE '[0-9]+' | head -1)
+  GIT_LINES_DEL=$(echo "$_shortstat" | grep -oE '[0-9]+ deletion' | grep -oE '[0-9]+' | head -1)
+  GIT_LINES_ADD=${GIT_LINES_ADD:-0}
+  GIT_LINES_DEL=${GIT_LINES_DEL:-0}
 fi
 
 # ── Cache hit rate ────────────────────────────────────────────
@@ -351,8 +361,8 @@ if [ -n "$BRANCH" ]; then
   [ "$GIT_M" -gt 0 ] 2>/dev/null && BRANCH_PARTS="${BRANCH_PARTS} ${YELLOW}${GIT_M}M${RESET}${DIM}"
   [ "$GIT_A" -gt 0 ] 2>/dev/null && BRANCH_PARTS="${BRANCH_PARTS} ${GREEN}${GIT_A}A${RESET}${DIM}"
   [ "$GIT_D" -gt 0 ] 2>/dev/null && BRANCH_PARTS="${BRANCH_PARTS} ${RED}${GIT_D}D${RESET}${DIM}"
-  [ -n "$LINES_ADD" ] && [ "$LINES_ADD" != "0" ] && BRANCH_PARTS="${BRANCH_PARTS} ${GREEN}+${LINES_ADD}${RESET}${DIM}"
-  [ -n "$LINES_DEL" ] && [ "$LINES_DEL" != "0" ] && BRANCH_PARTS="${BRANCH_PARTS} ${RED}-${LINES_DEL}${RESET}${DIM}"
+  [ "$GIT_LINES_ADD" -gt 0 ] 2>/dev/null && BRANCH_PARTS="${BRANCH_PARTS} ${GREEN}+${GIT_LINES_ADD}${RESET}${DIM}"
+  [ "$GIT_LINES_DEL" -gt 0 ] 2>/dev/null && BRANCH_PARTS="${BRANCH_PARTS} ${RED}-${GIT_LINES_DEL}${RESET}${DIM}"
   L1="${L1} ${DIM}(${BRANCH_PARTS})${RESET}"
 fi
 
@@ -429,7 +439,18 @@ else
   L3="${L3}${SEP}${DIM}api wait${RESET} ${CYAN}${API_DUR}${RESET}"
 fi
 
-# Tools running — moved from L4 to L3 (after api wait) per user preference.
+# Session-cumulative line diff (from cost.total_lines_*) — distinct from
+# git working-tree +N/-N inside the L1 parens. This is monotonic across the session.
+SESSION_LINES_PART=""
+if [ -n "$LINES_ADD" ] && [ "$LINES_ADD" != "0" ]; then
+  SESSION_LINES_PART="${GREEN}+${LINES_ADD}${RESET}"
+fi
+if [ -n "$LINES_DEL" ] && [ "$LINES_DEL" != "0" ]; then
+  [ -n "$SESSION_LINES_PART" ] && SESSION_LINES_PART="${SESSION_LINES_PART} ${RED}-${LINES_DEL}${RESET}" || SESSION_LINES_PART="${RED}-${LINES_DEL}${RESET}"
+fi
+[ -n "$SESSION_LINES_PART" ] && L3="${L3}${SEP}${SESSION_LINES_PART} ${DIM}lines${RESET}"
+
+# Tools running — moved from L4 to L3 (after api wait + session lines) per user preference.
 [ "$RUNNING_TOOL_COUNT" -gt 0 ] && L3="${L3}${SEP}${DIM}tools${RESET} ${YELLOW}${RUNNING_TOOLS}${RESET}"
 
 # Subagent dispatch (AJ-25 — claude-hud parity): rendered as dedicated L3.5 lines
