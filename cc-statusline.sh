@@ -429,6 +429,9 @@ else
   L3="${L3}${SEP}${DIM}api wait${RESET} ${CYAN}${API_DUR}${RESET}"
 fi
 
+# Tools running — moved from L4 to L3 (after api wait) per user preference.
+[ "$RUNNING_TOOL_COUNT" -gt 0 ] && L3="${L3}${SEP}${DIM}tools${RESET} ${YELLOW}${RUNNING_TOOLS}${RESET}"
+
 # Subagent dispatch (AJ-25 — claude-hud parity): rendered as dedicated L3.5 lines
 # below L3, not inline on L3. See AGENTS_LINES construction in the output section.
 # Replaced old `agents N type,type` inline render.
@@ -451,7 +454,7 @@ fi
 L4=""
 add4() { [ -n "$L4" ] && L4="${L4}${SEP}$1" || L4="$1"; }
 
-[ "$RUNNING_TOOL_COUNT" -gt 0 ] && add4 "${DIM}tools${RESET} ${YELLOW}${RUNNING_TOOLS}${RESET}"
+# Tools moved to L3 (after api wait) — was: add4 tools render here.
 if [ "$TODO_TOTAL" -gt 0 ]; then
   TODO_PART="${CYAN}todos ${TODO_DONE}/${TODO_TOTAL}${RESET}"
   [ -n "$TODO_CURRENT" ] && TODO_PART="${TODO_PART} ${DIM}${TODO_CURRENT:0:40}${RESET}"
