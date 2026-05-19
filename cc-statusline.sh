@@ -147,7 +147,7 @@ if [ -n "$TRANSCRIPT_PATH" ] && [ -f "$TRANSCRIPT_PATH" ]; then
   TOOL_USES=$(grep -F '"type":"tool_use"' "$TRANSCRIPT_PATH" 2>/dev/null \
     | jq -r 'select(.type=="assistant") | .message.content[]?
              | select(.type=="tool_use")
-             | "\(.id)\t\(.name)\t\(.input.subagent_type // "")"' 2>/dev/null)
+             | "\(.id)\t\(.name)\t\(.input.subagent_type // "")\t\(.input.description // "")"' 2>/dev/null)
   # Pass 2: completed tool_use_ids
   COMPLETED=$(grep -F '"tool_use_id":"toolu_' "$TRANSCRIPT_PATH" 2>/dev/null \
     | jq -r '.message.content[]? | select(.type=="tool_result") | .tool_use_id' 2>/dev/null \
@@ -171,6 +171,16 @@ if [ -n "$TRANSCRIPT_PATH" ] && [ -f "$TRANSCRIPT_PATH" ]; then
     # Last Agent invocation, regardless of completion — fallback for the L3
     # `agents` display when nothing is currently active.
     LAST_AGENT=$(awk -F'\t' '$2=="Agent" && $3!="" { last=$3 } END { print last }' <<< "$TOOL_USES")
+    # AJ-25: Agents-with-status (claude-hud parity) — both running + completed, up
+    # to 3 most recent. 4-field input: id name subagent_type description.
+    # Emits tab-sep: status<TAB>type<TAB>description.
+    AGENTS_WITH_STATUS=$(awk -F'\t' -v completed="$COMPLETED" '
+      BEGIN { n=split(completed, arr, "\n"); for (i=1;i<=n;i++) done[arr[i]]=1 }
+      $2=="Agent" && $3!="" {
+        status = ($1 in done) ? "done" : "running"
+        print status "\t" $3 "\t" $4
+      }
+    ' <<< "$TOOL_USES" | tail -3)
   fi
   # Last TodoWrite invocation → todo progress
   TODO_RAW=$(grep -F '"name":"TodoWrite"' "$TRANSCRIPT_PATH" 2>/dev/null \
@@ -300,17 +310,15 @@ for i in $(seq 1 $EMPTY); do BAR="${BAR}${DIM}●${RESET}"; done
 # To re-enable: uncomment below AND inject ${DUR} into the desired L1–L4 line.
 # DUR=$(fmt_dur "$DURATION_MS")
 
-# ── Git file stats ────────────────────────────────────────────
-GIT_STATS=""
+# ── Git file stats (M/A/D counts) — consumed inside the branch block on L1 ──
+# Per AJ-25: M/A/D + session +N/-N line diff are consolidated into the (branch*) parens.
+GIT_M=0
+GIT_A=0
+GIT_D=0
 if git rev-parse --git-dir > /dev/null 2>&1; then
   GIT_M=$(git diff --name-only 2>/dev/null | wc -l | tr -d ' ')
   GIT_A=$(git ls-files --others --exclude-standard 2>/dev/null | wc -l | tr -d ' ')
   GIT_D=$(git diff --diff-filter=D --name-only 2>/dev/null | wc -l | tr -d ' ')
-  PARTS=""
-  [ "$GIT_M" -gt 0 ] 2>/dev/null && PARTS="${YELLOW}${GIT_M}M${RESET}"
-  [ "$GIT_A" -gt 0 ] 2>/dev/null && { [ -n "$PARTS" ] && PARTS="${PARTS} "; PARTS="${PARTS}${GREEN}${GIT_A}A${RESET}"; }
-  [ "$GIT_D" -gt 0 ] 2>/dev/null && { [ -n "$PARTS" ] && PARTS="${PARTS} "; PARTS="${PARTS}${RED}${GIT_D}D${RESET}"; }
-  [ -n "$PARTS" ] && GIT_STATS="${PARTS}"
 fi
 
 # ── Cache hit rate ────────────────────────────────────────────
@@ -330,20 +338,24 @@ fi
 # ══════════════════════════════════════════════════════════════
 L1="${CYAN}${BOLD}${MODEL_DISP}${RESET}"
 [ -n "$CTX_LABEL" ] && L1="${L1} ${CTX_LABEL}"
-[ -n "$VERSION" ] && L1="${L1} ${DIM}v${VERSION}${RESET}"
+# [ -n "$VERSION" ] && L1="${L1} ${DIM}v${VERSION}${RESET}"   # Hidden per AJ-25 — uncomment to re-enable Claude Code version.
 L1="${L1}${SEP}${WHITE}${REPO_LINK}${RESET}"
-[ -n "$BRANCH" ] && L1="${L1} ${DIM}(${BRANCH})${RESET}"
 
-LINES_PART=""
-if [ -n "$LINES_ADD" ] && [ "$LINES_ADD" != "0" ]; then
-  LINES_PART="${GREEN}+${LINES_ADD}${RESET}"
+# ── Consolidated git block (AJ-25): (branch* M A D +N -N) — suppress zero categories ──
+if [ -n "$BRANCH" ]; then
+  BRANCH_PARTS="${BRANCH}"
+  # Dirty marker: any of M/A/D > 0
+  if { [ "$GIT_M" -gt 0 ] 2>/dev/null; } || { [ "$GIT_A" -gt 0 ] 2>/dev/null; } || { [ "$GIT_D" -gt 0 ] 2>/dev/null; }; then
+    BRANCH_PARTS="${BRANCH_PARTS}*"
+  fi
+  [ "$GIT_M" -gt 0 ] 2>/dev/null && BRANCH_PARTS="${BRANCH_PARTS} ${YELLOW}${GIT_M}M${RESET}${DIM}"
+  [ "$GIT_A" -gt 0 ] 2>/dev/null && BRANCH_PARTS="${BRANCH_PARTS} ${GREEN}${GIT_A}A${RESET}${DIM}"
+  [ "$GIT_D" -gt 0 ] 2>/dev/null && BRANCH_PARTS="${BRANCH_PARTS} ${RED}${GIT_D}D${RESET}${DIM}"
+  [ -n "$LINES_ADD" ] && [ "$LINES_ADD" != "0" ] && BRANCH_PARTS="${BRANCH_PARTS} ${GREEN}+${LINES_ADD}${RESET}${DIM}"
+  [ -n "$LINES_DEL" ] && [ "$LINES_DEL" != "0" ] && BRANCH_PARTS="${BRANCH_PARTS} ${RED}-${LINES_DEL}${RESET}${DIM}"
+  L1="${L1} ${DIM}(${BRANCH_PARTS})${RESET}"
 fi
-if [ -n "$LINES_DEL" ] && [ "$LINES_DEL" != "0" ]; then
-  [ -n "$LINES_PART" ] && LINES_PART="${LINES_PART} ${RED}-${LINES_DEL}${RESET}" || LINES_PART="${RED}-${LINES_DEL}${RESET}"
-fi
-[ -n "$LINES_PART" ] && L1="${L1}${SEP}${LINES_PART} ${DIM}lines${RESET}"
 
-[ -n "$GIT_STATS" ] && L1="${L1}${SEP}${GIT_STATS}"
 
 [ -n "$VIM_MODE" ] && {
   if [ "$VIM_MODE" = "NORMAL" ]; then
@@ -417,12 +429,9 @@ else
   L3="${L3}${SEP}${DIM}api wait${RESET} ${CYAN}${API_DUR}${RESET}"
 fi
 
-# Active subagents (MAGENTA), or last invoked subagent_type (DIM) as fallback.
-if [ "$ACTIVE_AGENT_COUNT" -gt 0 ]; then
-  L3="${L3}${SEP}${MAGENTA}agents ${ACTIVE_AGENT_COUNT} ${ACTIVE_AGENTS}${RESET}"
-elif [ -n "$LAST_AGENT" ]; then
-  L3="${L3}${SEP}${DIM}agents ${LAST_AGENT}${RESET}"
-fi
+# Subagent dispatch (AJ-25 — claude-hud parity): rendered as dedicated L3.5 lines
+# below L3, not inline on L3. See AGENTS_LINES construction in the output section.
+# Replaced old `agents N type,type` inline render.
 
 # Current token detail (cur in / read / write) — DISABLED, uncomment to re-enable.
 # Paired-disable note: CUR_INPUT (F[19]) / CACHE_READ (F[17]) / CACHE_CREATE (F[18])
@@ -455,9 +464,28 @@ if [ -n "$LAST_PROMPT" ]; then
   add4 "$PROMPT_PART"
 fi
 
+# ── Subagent dispatch lines (AJ-25 — claude-hud parity) ──────
+# Up to 3 most-recent agents, one per line. `◐` = running, `✓` = completed.
+AGENT_LINES=""
+if [ -n "$AGENTS_WITH_STATUS" ]; then
+  while IFS=$'\t' read -r ag_status ag_type ag_desc; do
+    [ -z "$ag_type" ] && continue
+    if [ "$ag_status" = "running" ]; then
+      ag_icon="${YELLOW}◐${RESET}"
+    else
+      ag_icon="${GREEN}✓${RESET}"
+    fi
+    # Truncate description to 60 chars (claude-hud uses ~40; widen a bit for cc-statusline density)
+    ag_desc_trunc="${ag_desc:0:60}"
+    ag_line="${ag_icon} ${MAGENTA}${ag_type}${RESET}: ${DIM}${ag_desc_trunc}${RESET}"
+    [ -n "$AGENT_LINES" ] && AGENT_LINES="${AGENT_LINES}"$'\n'"${ag_line}" || AGENT_LINES="${ag_line}"
+  done <<< "$AGENTS_WITH_STATUS"
+fi
+
 # ── Output ────────────────────────────────────────────────────
 echo -e "$L1"
 echo -e "$L2"
 echo -e "$L3"
+[ -n "$AGENT_LINES" ] && echo -e "$AGENT_LINES"
 [ -n "$L4" ] && echo -e "$L4"
 

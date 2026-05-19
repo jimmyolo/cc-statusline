@@ -41,7 +41,7 @@ check "non-empty output"               '[ -n "$out" ]'
 check "at least 3 lines"               '[ "$(printf "%s\n" "$plain" | wc -l)" -ge 3 ]'
 check "contains model name"            'grep -q "Opus 4.7" <<< "$plain"'
 check "contains 1M context label"      'grep -q "1M" <<< "$plain"'
-check "contains version"               'grep -q "v1.2.3" <<< "$plain"'
+check "version hidden (AJ-25)"         '! grep -q "v1.2.3" <<< "$plain"'
 check "contains session cost"          'grep -q "\$1.23" <<< "$plain"'
 check "contains today cost label"      'grep -qF "(today \$" <<< "$plain"'
 check "contains 5h rate limit"         'grep -q "5h 23%" <<< "$plain"'
@@ -69,7 +69,7 @@ echo "Output (plain, with transcript):"
 echo "$plain2" | sed 's/^/  | /'
 echo
 
-check "(active) contains agents indicator"  'grep -q "agents 1 reviewer-opus-high" <<< "$plain2"'
+check "(active) contains agents indicator"  'grep -qE "(◐|✓) reviewer-opus-high" <<< "$plain2"'
 check "(active) contains tools indicator"   'grep -q "tools Read" <<< "$plain2"'
 check "(active) contains todos progress"    'grep -q "todos 1/2" <<< "$plain2"'
 check "(active) contains current todo"      'grep -q "second" <<< "$plain2"'
