@@ -6,7 +6,8 @@
 #   ✅ active   ❌ block currently commented out (paired-disable candidate)
 #
 #   F[ 0] MODEL              .model.display_name                         → L1 model badge + EFFORT default lookup
-#   F[ 1] DIR                .workspace.current_dir                      → REPO_LINK basename (fallback when no git remote)
+#   F[ 1] DIR                .workspace.current_dir                      → REPO_LINK basename (fallback when no git remote) + PWD subpath
+#   F[22] PROJECT_DIR        .workspace.project_dir                      → L1 PWD subpath (cwd relative to project root)
 #   F[ 2] COST               .cost.total_cost_usd                        → L2 cost + today-cost tracker
 #   F[ 3] PCT                .context_window.used_percentage             → L2 context bar + % label
 #   F[ 4] CTX_SIZE           .context_window.context_window_size         → L1 1M/200K label
@@ -64,7 +65,8 @@ readarray -t F < <(jq -r '
   .context_window.current_usage.cache_creation_input_tokens // "",
   .context_window.current_usage.input_tokens // "",
   .session_id // "",
-  .transcript_path // ""
+  .transcript_path // "",
+  .workspace.project_dir // ""
 ' <<< "$input")
 
 MODEL=${F[0]}              # → L1 model + EFFORT default
@@ -89,6 +91,7 @@ CACHE_CREATE=${F[18]}      # → L3 cache hit + cur write
 CUR_INPUT=${F[19]}         # → L3 cache hit + cur in
 SESSION_ID=${F[20]}        # → today tracker + last-prompt lookup
 TRANSCRIPT_PATH=${F[21]}   # → L4 agents/tools/todos
+PROJECT_DIR=${F[22]}       # → L1 PWD subpath
 
 # ── Effort / thinking level (from settings.json) ──────────────
 EFFORT=$(jq -r '.effortLevel // empty' "$HOME/.claude/settings.json" 2>/dev/null)
@@ -287,6 +290,19 @@ if [ -n "$REMOTE" ]; then
   REPO_LINK=$(printf '%b' "\e]8;;${REMOTE}\a${REPO_NAME}\e]8;;\a")
 fi
 
+# PWD subpath: show cwd relative to project root when inside a subdirectory.
+# project_dir is supplied by the harness; fall back to git toplevel if absent.
+PWD_SUBPATH=""
+_proj="$PROJECT_DIR"
+if [ -z "$_proj" ]; then
+  _proj=$(git rev-parse --show-toplevel 2>/dev/null)
+fi
+if [ -n "$_proj" ] && [ -n "$DIR" ] && [ "$DIR" != "$_proj" ]; then
+  case "$DIR" in
+    "$_proj"/*) PWD_SUBPATH="${DIR#$_proj/}" ;;
+  esac
+fi
+
 # ── Context bar ───────────────────────────────────────────────
 # Each cell represents 10%; any partial above a 10%-multiple lights a half-cell.
 # Gives a smooth gradient: 0%=empty, 1-9%=◐, 10%=●, 11-19%=●◐, 20%=●●, ...
@@ -352,6 +368,7 @@ L1="${CYAN}${BOLD}${MODEL_DISP}${RESET}"
 [ -n "$CTX_LABEL" ] && L1="${L1} ${CTX_LABEL}"
 # [ -n "$VERSION" ] && L1="${L1} ${DIM}v${VERSION}${RESET}"   # Hidden per AJ-25 — uncomment to re-enable Claude Code version.
 L1="${L1}${SEP}${WHITE}${REPO_LINK}${RESET}"
+[ -n "$PWD_SUBPATH" ] && L1="${L1}${DIM}/${PWD_SUBPATH}${RESET}"
 
 # ── Consolidated git block (AJ-25): (branch* M A D +N -N) — suppress zero categories ──
 if [ -n "$BRANCH" ]; then
