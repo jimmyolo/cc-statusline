@@ -319,6 +319,7 @@ GIT_A=0
 GIT_D=0
 GIT_LINES_ADD=0
 GIT_LINES_DEL=0
+GIT_COMMIT=""
 if git rev-parse --git-dir > /dev/null 2>&1; then
   GIT_M=$(git diff --name-only 2>/dev/null | wc -l | tr -d ' ')
   GIT_A=$(git ls-files --others --exclude-standard 2>/dev/null | wc -l | tr -d ' ')
@@ -329,6 +330,7 @@ if git rev-parse --git-dir > /dev/null 2>&1; then
   GIT_LINES_DEL=$(echo "$_shortstat" | grep -oE '[0-9]+ deletion' | grep -oE '[0-9]+' | head -1)
   GIT_LINES_ADD=${GIT_LINES_ADD:-0}
   GIT_LINES_DEL=${GIT_LINES_DEL:-0}
+  GIT_COMMIT=$(git rev-parse --short HEAD 2>/dev/null)
 fi
 
 # ── Cache hit rate ────────────────────────────────────────────
@@ -365,6 +367,9 @@ if [ -n "$BRANCH" ]; then
   [ "$GIT_LINES_DEL" -gt 0 ] 2>/dev/null && BRANCH_PARTS="${BRANCH_PARTS} ${RED}-${GIT_LINES_DEL}${RESET}${DIM}"
   L1="${L1} ${DIM}(${BRANCH_PARTS})${RESET}"
 fi
+
+# ── Current commit short hash (after worktree/branch block) ──
+[ -n "$GIT_COMMIT" ] && L1="${L1} ${DIM}@${RESET}${MAGENTA}${GIT_COMMIT}${RESET}"
 
 
 [ -n "$VIM_MODE" ] && {
