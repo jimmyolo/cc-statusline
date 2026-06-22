@@ -360,9 +360,28 @@ if [ -n "$CACHE_READ" ] && [ -n "$CUR_INPUT" ] && [ "$CUR_INPUT" != "0" ]; then
   fi
 fi
 
+# ── Login account (from ~/.claude.json) ───────────────────────
+# Source: .oauthAccount — not in statusline stdin JSON, read directly like EFFORT.
+# Display: displayName + redacted email (local part masked to first char).
+ACCOUNT=""
+ACCT_NAME=$(jq -r '.oauthAccount.displayName // empty' "$HOME/.claude.json" 2>/dev/null)
+ACCT_EMAIL=$(jq -r '.oauthAccount.emailAddress // empty' "$HOME/.claude.json" 2>/dev/null)
+ACCT_REDACTED=""
+if [ -n "$ACCT_EMAIL" ]; then
+  ACCT_REDACTED="${ACCT_EMAIL%%@*}"
+  ACCT_REDACTED="${ACCT_REDACTED:0:1}***@${ACCT_EMAIL#*@}"
+fi
+if [ -n "$ACCT_NAME" ] && [ -n "$ACCT_REDACTED" ]; then
+  ACCOUNT="👤 ${ACCT_NAME} ${DIM}·${RESET} ${DIM}${ACCT_REDACTED}${RESET}"
+elif [ -n "$ACCT_NAME" ]; then
+  ACCOUNT="👤 ${ACCT_NAME}"
+elif [ -n "$ACCT_REDACTED" ]; then
+  ACCOUNT="👤 ${DIM}${ACCT_REDACTED}${RESET}"
+fi
+
 # ══════════════════════════════════════════════════════════════
-# LINE 1: Model + Context size + Version + Repo + Branch + Lines + Files + Agent
-# INPUTS: MODEL_DISP CTX_LABEL VERSION REPO_LINK BRANCH LINES_ADD LINES_DEL GIT_STATS VIM_MODE
+# LINE 1: Model + Context size + Version + Repo + Branch + Lines + Files + Agent + Account
+# INPUTS: MODEL_DISP CTX_LABEL VERSION REPO_LINK BRANCH LINES_ADD LINES_DEL GIT_STATS VIM_MODE ACCOUNT
 # ══════════════════════════════════════════════════════════════
 L1="${CYAN}${BOLD}${MODEL_DISP}${RESET}"
 [ -n "$CTX_LABEL" ] && L1="${L1} ${CTX_LABEL}"
@@ -396,6 +415,9 @@ fi
     L1="${L1}${SEP}${GREEN}${BOLD}INS${RESET}"
   fi
 }
+
+# ── Login account (identity, end of L1) ──────────────────────
+[ -n "$ACCOUNT" ] && L1="${L1}${SEP}${ACCOUNT}"
 
 # ══════════════════════════════════════════════════════════════
 # LINE 2: Context bar + Cost + Duration + Rate limits (5h & 7d with countdown)
