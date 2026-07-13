@@ -137,6 +137,15 @@ fi
 
 # ── Transcript-derived widgets (agents / tools / todos) ───────
 # Single parse pass to extract all needed signals from the transcript.
+# Perf: only the last TRANSCRIPT_TAIL_LINES lines are scanned (via `tail -n | grep`,
+# NOT a shared bash variable — a multi-MB var re-fed through `<<<` here-strings
+# gets rematerialized to a temp file on every use and was measured 10x slower
+# than three independent `tail | grep` pipes). Cost of the old full-file grep+jq
+# pass grew with total tool-calls in the session (measured: 1.8s on an
+# 89K-line/251MB synthetic transcript); the display only ever needs the 3 most
+# recent agents/tools/todo anyway, so bounding the window keeps cost flat
+# (~20ms added) regardless of how long the session gets.
+TRANSCRIPT_TAIL_LINES=2000
 ACTIVE_AGENTS=""
 ACTIVE_AGENT_COUNT=0
 LAST_AGENT=""
@@ -147,12 +156,14 @@ TODO_TOTAL=0
 TODO_CURRENT=""
 if [ -n "$TRANSCRIPT_PATH" ] && [ -f "$TRANSCRIPT_PATH" ]; then
   # Pass 1: every tool_use (id, name, subagent_type) — pre-filtered with grep
-  TOOL_USES=$(grep -F '"type":"tool_use"' "$TRANSCRIPT_PATH" 2>/dev/null \
+  TOOL_USES=$(tail -n "$TRANSCRIPT_TAIL_LINES" "$TRANSCRIPT_PATH" 2>/dev/null \
+    | grep -F '"type":"tool_use"' \
     | jq -r 'select(.type=="assistant") | .message.content[]?
              | select(.type=="tool_use")
              | "\(.id)\t\(.name)\t\(.input.subagent_type // "")\t\(.input.description // "")"' 2>/dev/null)
   # Pass 2: completed tool_use_ids
-  COMPLETED=$(grep -F '"tool_use_id":"toolu_' "$TRANSCRIPT_PATH" 2>/dev/null \
+  COMPLETED=$(tail -n "$TRANSCRIPT_TAIL_LINES" "$TRANSCRIPT_PATH" 2>/dev/null \
+    | grep -F '"tool_use_id":"toolu_' \
     | jq -r '.message.content[]? | select(.type=="tool_result") | .tool_use_id' 2>/dev/null \
     | sort -u)
   if [ -n "$TOOL_USES" ]; then
@@ -186,7 +197,8 @@ if [ -n "$TRANSCRIPT_PATH" ] && [ -f "$TRANSCRIPT_PATH" ]; then
     ' <<< "$TOOL_USES" | tail -3)
   fi
   # Last TodoWrite invocation → todo progress
-  TODO_RAW=$(grep -F '"name":"TodoWrite"' "$TRANSCRIPT_PATH" 2>/dev/null \
+  TODO_RAW=$(tail -n "$TRANSCRIPT_TAIL_LINES" "$TRANSCRIPT_PATH" 2>/dev/null \
+    | grep -F '"name":"TodoWrite"' \
     | tail -1 \
     | jq -c '.message.content[]? | select(.type=="tool_use" and .name=="TodoWrite") | .input.todos // []' 2>/dev/null)
   if [ -n "$TODO_RAW" ] && [ "$TODO_RAW" != "null" ] && [ "$TODO_RAW" != "[]" ]; then
