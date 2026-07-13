@@ -1,6 +1,11 @@
 # cc-statusline
 
-A multi-line, ANSI-colored statusline renderer for [Claude Code](https://claude.com/claude-code), written in pure `bash` + `jq`. Surfaces model, cost, context, rate limits, token usage, cache hit rate, live agent/tool/todo activity, and the last prompt — all in 3–4 lines.
+A multi-line, ANSI-colored statusline renderer for [Claude Code](https://claude.com/claude-code). Surfaces model, cost, context, rate limits, token usage, cache hit rate, live agent/tool/todo activity, and the last prompt — all in 3–4 lines.
+
+Two equivalent implementations, pick whichever fits your platform:
+
+- **[`cc-statusline.sh`](cc-statusline.sh)** — pure `bash` + `jq`. The primary version (Linux/macOS). Chosen over a Node.js implementation to avoid an extra runtime binary and its higher idle memory footprint.
+- **[`cc-statusline.ps1`](cc-statusline.ps1)** — PowerShell 7+ (`pwsh`), for Windows (also runs on macOS/Linux `pwsh`). Same field map, layout, and output — see [PowerShell version](#powershell-version) below for the install path and its trade-offs.
 
 ## Sample output
 
@@ -44,9 +49,36 @@ ln -s ~/projects/cc-statusline/cc-statusline.sh ~/.claude/cc-statusline.sh
 
 Statusline is hot-reloaded — next refresh picks up the new script. No session restart needed.
 
+## PowerShell version
+
+```powershell
+# 1. Clone anywhere (same repo as the bash version)
+git clone https://github.com/jimmyolo/cc-statusline.git ~/projects/cc-statusline
+
+# 2. Symlink into ~/.claude/ (on Windows this needs Developer Mode enabled, or an
+#    elevated shell — otherwise New-Item errors with "you do not have sufficient
+#    privilege"; copying the file instead works without either)
+New-Item -ItemType SymbolicLink -Path "$HOME/.claude/cc-statusline.ps1" -Target "~/projects/cc-statusline/cc-statusline.ps1"
+
+# 3. Wire up in ~/.claude/settings.json
+#    {
+#      "statusLine": {
+#        "type": "command",
+#        "command": "pwsh -NoProfile -File \"$HOME/.claude/cc-statusline.ps1\""
+#      }
+#    }
+```
+
+Requires PowerShell 7+ (`pwsh`) — Windows PowerShell 5.1 does not have the `??` operator this script uses. **Always pass `-NoProfile`**: statusline commands run on every render, and a profile script re-sourcing on every invocation is a real, avoidable latency hit.
+
+Field map, layout, and output are intended to be byte-identical to `cc-statusline.sh` for the same input — verified against `test/sample.json` and an active-transcript fixture (see [Testing](#testing)). Two trade-offs worth knowing before you rely on it:
+
+- **Higher per-invocation floor.** PowerShell/.NET startup + cmdlet JIT warmup + the ~8 external `git` calls the script makes measure around 600–700ms end to end, versus bash's ~90ms. This is inherent to the runtime (same category of trade-off as the Node.js option that was passed over for the bash version), not something this script can optimize away without a much larger rewrite (e.g. a git library binding instead of shelling out).
+- **Verified on Linux `pwsh`, not Windows Terminal.** Development/testing here ran on a portable `pwsh` on Linux — that confirms the logic and output are correct, but *not* how ANSI color, OSC 8 hyperlinks, or emoji width actually render in Windows Terminal / VS Code's integrated terminal. Sanity-check the rendered output there before trusting it blind.
+
 ## Field reference
 
-The script reads 22 fields from the JSON Claude Code pipes to its `statusLine.command` on stdin. Each field maps to a specific display block:
+Both scripts read the same 22 fields from the JSON Claude Code pipes to `statusLine.command` on stdin (same JSON paths, different variable-naming convention per language). Each field maps to a specific display block:
 
 | Field | JSON path | Displayed in |
 |---|---|---|
@@ -80,6 +112,19 @@ The full mapping (with paired-disable annotations) lives at the top of [`cc-stat
 
 Disabled by default (one-line uncomment to re-enable — see [Customization](#customization)): per-message duration (`DUR`), tokens-per-minute burn rate, and current-usage detail (`cur N in / N read / N write`).
 
+## Performance
+
+The agents/tools/todos widgets read `.transcript_path`, which grows for the life of a session. Both scripts bound that read to the last ~2000 lines instead of scanning the whole file, so render cost stays flat as sessions get longer instead of growing with total transcript size — the display only ever needs the 3 most recent agents/tools/todo anyway.
+
+Measured before/after on a synthetic 89K-line/251MB transcript (20x a real 12MB session capture, as a worst-case stress test):
+
+| | Unbounded (old) | Bounded (current) |
+|---|---|---|
+| `cc-statusline.sh` | 1.9s | 0.15s |
+| `cc-statusline.ps1` | 9.7s (`Get-Content -Tail`) | 1.9s (`[System.IO.File]::ReadLines()`) |
+
+The bash version gets a true flat cost (`tail -n` seeks from EOF, like GNU `tail` always has). The PowerShell version is bounded but still scales with total file size — .NET has no built-in seek-from-EOF line reader, and `Get-Content -Tail` is not one either (it was the original bottleneck here, at 8.6s alone on the same file). `File.ReadLines()` avoids `Get-Content`'s per-line pipeline overhead (measured 0.5s for a full scan of the same file) but still reads start-to-finish. In practice this is a non-issue: real transcripts measured on this machine top out around 12MB, where the difference between "flat" and "scales with size" doesn't matter.
+
 ## Customization
 
 The script is annotated for surgical edits:
@@ -103,16 +148,17 @@ To re-enable the bundled disabled blocks (Duration, Burn rate, cur-detail):
 ## Testing
 
 ```bash
-bash test/smoke.sh
+bash test/smoke.sh          # cc-statusline.sh
+pwsh test/smoke.ps1         # cc-statusline.ps1
 ```
 
-Runs the script against `test/sample.json` and asserts:
+Each runs its respective script against `test/sample.json` (plus an active-transcript fixture for the agents/tools/todos widgets) and asserts:
 
 - Output contains at least 3 non-empty lines.
-- Output contains expected markers (model name, version, context size, cost).
+- Output contains expected markers (model name, version, context size, cost, rate limits, tokens, cache hit, vim mode, agents/tools/todos).
 - Script does not crash.
 
-The smoke test is robust to volatile fields (today-cost tracker, countdown timers) by checking for structural markers rather than exact byte equality.
+Both smoke tests are robust to volatile fields (today-cost tracker, countdown timers) by checking for structural markers rather than exact byte equality. The two scripts are also cross-checked to produce byte-identical plain-text output for the same input (see [PowerShell version](#powershell-version)).
 
 ## License
 
