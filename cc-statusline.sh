@@ -569,3 +569,7 @@ echo -e "$L3"
 [ -n "$AGENT_LINES" ] && echo -e "$AGENT_LINES"
 [ -n "$L4" ] && echo -e "$L4"
 
+# Claude Code discards statusline output on a non-zero exit. The optional-line
+# tests above become the exit status when their variable is empty, so pin it.
+exit 0
+
