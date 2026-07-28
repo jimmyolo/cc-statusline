@@ -9,8 +9,8 @@
 #   F[ 1] DIR                .workspace.current_dir                      → REPO_LINK basename (fallback when no git remote) + PWD subpath
 #   F[22] PROJECT_DIR        .workspace.project_dir                      → L1 PWD subpath (cwd relative to project root)
 #   F[ 2] COST               .cost.total_cost_usd                        → L2 cost + today-cost tracker
-#   F[ 3] PCT                .context_window.used_percentage             → L2 context bar + % label
-#   F[ 4] CTX_SIZE           .context_window.context_window_size         → L1 1M/200K label
+#   F[ 3] PCT                .context_window.used_percentage             → L2 context bar + % label (fallback only; recomputed vs CTX_EFF, l. ~284)
+#   F[ 4] CTX_SIZE           .context_window.context_window_size         → CTX_EFF → L1 window label + L2 % denominator
 #   F[ 5] DURATION_MS        .cost.total_duration_ms                     → L3 api wait %  ❌ DUR (l.252)  ❌ burn rate (l.345)
 #   F[ 6] LINES_ADD          .cost.total_lines_added                     → L1 +N lines
 #   F[ 7] LINES_DEL          .cost.total_lines_removed                   → L1 -N lines
@@ -23,9 +23,9 @@
 #   F[14] TOTAL_IN_TOKENS    .context_window.total_input_tokens          → L3 in:           ❌ burn rate
 #   F[15] TOTAL_OUT_TOKENS   .context_window.total_output_tokens         → L3 out:          ❌ burn rate
 #   F[16] API_DURATION_MS    .cost.total_api_duration_ms                 → L3 api wait
-#   F[17] CACHE_READ         .context_window.current_usage.cache_read_input_tokens      → L3 cache hit + cur read
-#   F[18] CACHE_CREATE       .context_window.current_usage.cache_creation_input_tokens  → L3 cache hit + cur write
-#   F[19] CUR_INPUT          .context_window.current_usage.input_tokens                 → L3 cache hit + cur in
+#   F[17] CACHE_READ         .context_window.current_usage.cache_read_input_tokens      → L3 cache hit + cur read  + L2 % numerator
+#   F[18] CACHE_CREATE       .context_window.current_usage.cache_creation_input_tokens  → L3 cache hit + cur write + L2 % numerator
+#   F[19] CUR_INPUT          .context_window.current_usage.input_tokens                 → L3 cache hit + cur in    + L2 % numerator
 #   F[20] SESSION_ID         .session_id                                 → today-cost tracker + last-prompt lookup
 #   F[21] TRANSCRIPT_PATH    .transcript_path                            → L4 agents / tools / todos
 #
@@ -72,8 +72,8 @@ readarray -t F < <(jq -r '
 MODEL=${F[0]}              # → L1 model + EFFORT default
 DIR=${F[1]}                # → REPO_LINK basename fallback
 COST=${F[2]}               # → L2 cost + today tracker
-PCT=${F[3]}                # → L2 context bar + %
-CTX_SIZE=${F[4]}           # → L1 1M/200K label
+PCT=${F[3]}                # → L2 context bar + %  (fallback; recomputed vs CTX_EFF)
+CTX_SIZE=${F[4]}           # → CTX_EFF → L1 window label + L2 % denominator
 DURATION_MS=${F[5]}        # → L3 api wait %  + ❌DUR + ❌burn (shared, do NOT disable extraction)
 LINES_ADD=${F[6]}          # → L1 +lines
 LINES_DEL=${F[7]}          # → L1 -lines
@@ -86,9 +86,9 @@ RESET_7D=${F[13]}          # → L2 7d countdown
 TOTAL_IN_TOKENS=${F[14]}   # → L3 in:   + ❌burn (shared)
 TOTAL_OUT_TOKENS=${F[15]}  # → L3 out:  + ❌burn (shared)
 API_DURATION_MS=${F[16]}   # → L3 api wait
-CACHE_READ=${F[17]}        # → L3 cache hit + cur read
-CACHE_CREATE=${F[18]}      # → L3 cache hit + cur write
-CUR_INPUT=${F[19]}         # → L3 cache hit + cur in
+CACHE_READ=${F[17]}        # → L3 cache hit + cur read  + L2 % numerator (shared)
+CACHE_CREATE=${F[18]}      # → L3 cache hit + cur write + L2 % numerator (shared)
+CUR_INPUT=${F[19]}         # → L3 cache hit + cur in    + L2 % numerator (shared)
 SESSION_ID=${F[20]}        # → today tracker + last-prompt lookup
 TRANSCRIPT_PATH=${F[21]}   # → L4 agents/tools/todos
 PROJECT_DIR=${F[22]}       # → L1 PWD subpath
@@ -281,15 +281,31 @@ fmt_tokens() {
   fi
 }
 
+# ── Helper: format a context-window size (round numbers only) ─
+fmt_window() {
+  local t=$1
+  if [ $((t % 1000000)) -eq 0 ]; then echo "$((t / 1000000))M"; else echo "$((t / 1000))K"; fi
+}
+
+# ── Effective context window + usage % ────────────────────────
+# stdin's context_window.used_percentage divides by the RAW model window
+# (CLI Xv(): 1e6 for [1m] models) and ignores CLAUDE_CODE_AUTO_COMPACT_WINDOW,
+# while auto-compact measures against that env value — up to 5x under-report.
+# Recompute against the window the compactor actually sees.
+CTX_EFF=$CTX_SIZE
+ACW=${CLAUDE_CODE_AUTO_COMPACT_WINDOW:-}
+if [ -n "$ACW" ] && [ "$ACW" -gt 0 ] 2>/dev/null; then
+  { [ -z "$CTX_EFF" ] || [ "$ACW" -lt "$CTX_EFF" ]; } && CTX_EFF=$ACW
+fi
+CUR_TOKENS=$(( ${CUR_INPUT:-0} + ${CACHE_READ:-0} + ${CACHE_CREATE:-0} ))
+if [ -n "$CTX_EFF" ] && [ "$CTX_EFF" -gt 0 ] && [ "$CUR_TOKENS" -gt 0 ]; then
+  PCT=$(( CUR_TOKENS * 100 / CTX_EFF ))
+  [ "$PCT" -gt 100 ] && PCT=100
+fi
+
 # ── Context window size label ─────────────────────────────────
 CTX_LABEL=""
-if [ -n "$CTX_SIZE" ]; then
-  if [ "$CTX_SIZE" -ge 1000000 ]; then
-    CTX_LABEL="${DIM}1M${RESET}"
-  else
-    CTX_LABEL="${DIM}200K${RESET}"
-  fi
-fi
+[ -n "$CTX_EFF" ] && [ "$CTX_EFF" -gt 0 ] && CTX_LABEL="${DIM}$(fmt_window "$CTX_EFF")${RESET}"
 
 # ── Git info ──────────────────────────────────────────────────
 BRANCH=""
