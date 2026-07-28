@@ -305,7 +305,7 @@ fi
 
 # ── Context window size label ─────────────────────────────────
 CTX_LABEL=""
-[ -n "$CTX_EFF" ] && CTX_LABEL="${DIM}$(fmt_window "$CTX_EFF")${RESET}"
+[ -n "$CTX_EFF" ] && [ "$CTX_EFF" -gt 0 ] && CTX_LABEL="${DIM}$(fmt_window "$CTX_EFF")${RESET}"
 
 # ── Git info ──────────────────────────────────────────────────
 BRANCH=""

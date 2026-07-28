@@ -86,7 +86,8 @@ function Format-Tokens {
 function Format-Window {
     # Context-window sizes are round numbers — mirrors bash fmt_window().
     param([int64]$T)
-    if ($T % 1000000 -eq 0) { return "$([int64]($T / 1000000))M" } else { return "$([int64]($T / 1000))K" }
+    # [int64] cast would banker's-round; bash's $((t / 1000)) truncates.
+    if ($T % 1000000 -eq 0) { return "$([math]::Truncate($T / 1000000))M" } else { return "$([math]::Truncate($T / 1000))K" }
 }
 
 function Get-TailLines {
@@ -330,7 +331,7 @@ if ($null -ne $CtxEff -and $CtxEff -gt 0 -and $CurTokens -gt 0) {
 
 # ── Context window size label ─────────────────────────────────
 $CtxLabel = ''
-if ($null -ne $CtxEff) { $CtxLabel = "${Dim}$(Format-Window $CtxEff)${Reset}" }
+if ($null -ne $CtxEff -and $CtxEff -gt 0) { $CtxLabel = "${Dim}$(Format-Window $CtxEff)${Reset}" }
 
 # ── Git info ──────────────────────────────────────────────────
 $Branch = ''
