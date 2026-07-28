@@ -85,8 +85,8 @@ Both scripts read the same 22 fields from the JSON Claude Code pipes to `statusL
 | `MODEL` | `.model.display_name` | L1 model badge |
 | `DIR` | `.workspace.current_dir` | Repo-link basename fallback |
 | `COST` | `.cost.total_cost_usd` | L2 cost + today tracker |
-| `PCT` | `.context_window.used_percentage` | L2 context bar |
-| `CTX_SIZE` | `.context_window.context_window_size` | L1 `1M`/`200K` label |
+| `PCT` | `.context_window.used_percentage` | L2 context bar (fallback only — recomputed against `CTX_EFF`) |
+| `CTX_SIZE` | `.context_window.context_window_size` | `CTX_EFF` → L1 window label + L2 `%` denominator |
 | `DURATION_MS` | `.cost.total_duration_ms` | L3 api-wait %, plus disabled blocks |
 | `LINES_ADD` / `LINES_DEL` | `.cost.total_lines_{added,removed}` | L1 `+N -N lines` |
 | `VIM_MODE` | `.vim.mode` | L1 NOR / INS |
@@ -95,7 +95,7 @@ Both scripts read the same 22 fields from the JSON Claude Code pipes to `statusL
 | `RESET_5H` / `RESET_7D` | `.rate_limits.{five_hour,seven_day}.resets_at` | L2 countdown |
 | `TOTAL_IN_TOKENS` / `TOTAL_OUT_TOKENS` | `.context_window.total_{input,output}_tokens` | L3 `in:` / `out:` |
 | `API_DURATION_MS` | `.cost.total_api_duration_ms` | L3 api wait |
-| `CACHE_READ` / `CACHE_CREATE` / `CUR_INPUT` | `.context_window.current_usage.*` | L3 cache hit (cur detail disabled by default) |
+| `CACHE_READ` / `CACHE_CREATE` / `CUR_INPUT` | `.context_window.current_usage.*` | L3 cache hit (cur detail disabled by default) + L2 `%` numerator |
 | `SESSION_ID` | `.session_id` | Today-cost tracker + last-prompt lookup |
 | `TRANSCRIPT_PATH` | `.transcript_path` | L3 agents · L4 tools · todos |
 
@@ -109,6 +109,10 @@ The full mapping (with paired-disable annotations) lives at the top of [`cc-stat
 | L2 | context-bar · cost (session + today) · 5h limit · 7d limit |
 | L3 | cache-hit · tokens in/out · api wait · agents (magenta=running, dim=last seen) |
 | L4 | running tools · todos (with current task) · last prompt (with `❯` marker) — entire line conditionally rendered |
+
+### Context bar denominator
+
+The context bar and its `%` are **not** the `used_percentage` Claude Code sends on stdin. That field divides current usage by the *raw* model window (1,000,000 for `[1m]` models) and ignores `CLAUDE_CODE_AUTO_COMPACT_WINDOW`, while auto-compact measures against a window that *does* honour it — so with the env var set the bar could read ~17% at the moment compaction fires. Both scripts instead recompute against `CTX_EFF = min(context_window_size, CLAUDE_CODE_AUTO_COMPACT_WINDOW)`, and the L1 window label shows that same effective window. With the env var unset, `CTX_EFF` is just the model window and the displayed `%` matches stdin.
 
 Disabled by default (one-line uncomment to re-enable — see [Customization](#customization)): per-message duration (`DUR`), tokens-per-minute burn rate, and current-usage detail (`cur N in / N read / N write`).
 

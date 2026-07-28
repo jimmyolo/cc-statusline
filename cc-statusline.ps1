@@ -10,8 +10,8 @@
 #   Dir                .workspace.current_dir                      -> RepoLink basename fallback + Pwd subpath
 #   ProjectDir         .workspace.project_dir                      -> L1 Pwd subpath (cwd relative to project root)
 #   Cost               .cost.total_cost_usd                        -> L2 cost + today-cost tracker
-#   Pct                .context_window.used_percentage              -> L2 context bar + % label
-#   CtxSize            .context_window.context_window_size          -> L1 1M/200K label
+#   Pct                .context_window.used_percentage              -> L2 context bar + % label (fallback only; recomputed vs CtxEff)
+#   CtxSize            .context_window.context_window_size          -> CtxEff -> L1 window label + L2 % denominator
 #   DurationMs         .cost.total_duration_ms                      -> L3 api wait %  [ ] Dur  [ ] burn rate
 #   LinesAdd/LinesDel  .cost.total_lines_{added,removed}             -> L1 +N -N lines
 #   VimMode            .vim.mode                                    -> L1 NOR / INS
@@ -20,7 +20,7 @@
 #   Reset5h/Reset7d     .rate_limits.{five_hour,seven_day}.resets_at       -> L2 countdown
 #   TotalInTokens/TotalOutTokens .context_window.total_{input,output}_tokens -> L3 in:/out:  [ ] burn rate
 #   ApiDurationMs      .cost.total_api_duration_ms                  -> L3 api wait
-#   CacheRead/CacheCreate/CurInput .context_window.current_usage.*  -> L3 cache hit  [ ] cur detail
+#   CacheRead/CacheCreate/CurInput .context_window.current_usage.*  -> L3 cache hit + L2 % numerator  [ ] cur detail
 #   SessionId          .session_id                                  -> today-cost tracker + last-prompt lookup
 #   TranscriptPath     .transcript_path                             -> agents / tools / todos widgets
 #
@@ -83,6 +83,12 @@ function Format-Tokens {
     else { return [string][int64]$val }
 }
 
+function Format-Window {
+    # Context-window sizes are round numbers — mirrors bash fmt_window().
+    param([int64]$T)
+    if ($T % 1000000 -eq 0) { return "$([int64]($T / 1000000))M" } else { return "$([int64]($T / 1000))K" }
+}
+
 function Get-TailLines {
     # `Get-Content -Tail` is NOT a seek-from-EOF tail like GNU `tail` — it reads
     # through the whole file (measured: 8.6s on a 251MB/89K-line transcript).
@@ -108,8 +114,8 @@ if ([string]::IsNullOrEmpty($Model)) { $Model = 'Claude' }
 $Dir = $Json.workspace.current_dir
 $Cost = $Json.cost.total_cost_usd
 if ($null -eq $Cost) { $Cost = 0 }
-$Pct = [math]::Floor([double]($(if ($null -eq $Json.context_window.used_percentage) { 0 } else { $Json.context_window.used_percentage })))
-$CtxSize = $Json.context_window.context_window_size
+$Pct = [math]::Floor([double]($(if ($null -eq $Json.context_window.used_percentage) { 0 } else { $Json.context_window.used_percentage })))  # fallback; recomputed vs $CtxEff
+$CtxSize = $Json.context_window.context_window_size  # -> $CtxEff -> L1 window label + L2 % denominator
 $DurationMs = $Json.cost.total_duration_ms
 if ($null -eq $DurationMs) { $DurationMs = 0 }
 $LinesAdd = $Json.cost.total_lines_added
@@ -123,9 +129,9 @@ $TotalInTokens = $Json.context_window.total_input_tokens
 $TotalOutTokens = $Json.context_window.total_output_tokens
 $ApiDurationMs = $Json.cost.total_api_duration_ms
 if ($null -eq $ApiDurationMs) { $ApiDurationMs = 0 }
-$CacheRead = $Json.context_window.current_usage.cache_read_input_tokens
-$CacheCreate = $Json.context_window.current_usage.cache_creation_input_tokens
-$CurInput = $Json.context_window.current_usage.input_tokens
+$CacheRead = $Json.context_window.current_usage.cache_read_input_tokens      # + L2 % numerator (shared)
+$CacheCreate = $Json.context_window.current_usage.cache_creation_input_tokens # + L2 % numerator (shared)
+$CurInput = $Json.context_window.current_usage.input_tokens                  # + L2 % numerator (shared)
 $SessionId = $Json.session_id
 $TranscriptPath = $Json.transcript_path
 $ProjectDir = $Json.workspace.project_dir
@@ -302,11 +308,29 @@ if ((Test-Path $HistoryFile) -and $SessionId) {
     }
 }
 
+# ── Effective context window + usage % ────────────────────────
+# stdin's context_window.used_percentage divides by the RAW model window
+# (CLI Xv(): 1e6 for [1m] models) and ignores CLAUDE_CODE_AUTO_COMPACT_WINDOW,
+# while auto-compact measures against that env value — up to 5x under-report.
+# Recompute against the window the compactor actually sees.
+$CtxEff = $null
+if ($CtxSize) { $CtxEff = [int64]$CtxSize }
+$Acw = $env:CLAUDE_CODE_AUTO_COMPACT_WINDOW
+if ($Acw -match '^\d+$' -and [int64]$Acw -gt 0) {
+    if ($null -eq $CtxEff -or [int64]$Acw -lt $CtxEff) { $CtxEff = [int64]$Acw }
+}
+$CurTokens = [int64]0
+foreach ($t in @($CurInput, $CacheRead, $CacheCreate)) {
+    if ($null -ne $t -and $t -ne '') { $CurTokens += [int64]$t }
+}
+if ($null -ne $CtxEff -and $CtxEff -gt 0 -and $CurTokens -gt 0) {
+    $Pct = [math]::Floor($CurTokens * 100 / $CtxEff)
+    if ($Pct -gt 100) { $Pct = 100 }
+}
+
 # ── Context window size label ─────────────────────────────────
 $CtxLabel = ''
-if ($CtxSize) {
-    if ([int64]$CtxSize -ge 1000000) { $CtxLabel = "${Dim}1M${Reset}" } else { $CtxLabel = "${Dim}200K${Reset}" }
-}
+if ($null -ne $CtxEff) { $CtxLabel = "${Dim}$(Format-Window $CtxEff)${Reset}" }
 
 # ── Git info ──────────────────────────────────────────────────
 $Branch = ''
