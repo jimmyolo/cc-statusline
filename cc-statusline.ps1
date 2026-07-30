@@ -144,8 +144,7 @@ if (Test-Path $SettingsPath) {
     try { $Effort = (Get-Content $SettingsPath -Raw | ConvertFrom-Json).effortLevel } catch {}
 }
 if ([string]::IsNullOrEmpty($Effort)) {
-    if ($Model -match 'Opus') { $Effort = 'xhigh' }
-    elseif ($Model -match 'Sonnet') { $Effort = 'medium' }
+    if ($Model -match 'Opus') { $Effort = 'medium' }
     else { $Effort = 'high' }
 }
 $EffortLabel = switch ($Effort) {
