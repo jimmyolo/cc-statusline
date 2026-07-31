@@ -119,7 +119,7 @@ esac
 # Mirror of claude-dashboard's per-session aggregation: track each session's
 # running cost.total_cost_usd in a JSON file and sum across today's sessions.
 TRACKER=$HOME/.claude/cc-statusline-cost.json
-TODAY=$(date +%Y-%m-%d)
+printf -v TODAY '%(%Y-%m-%d)T' -1
 TODAY_COST=0
 if [ -n "$SESSION_ID" ]; then
   TODAY_COST=$(jq -r --arg today "$TODAY" --arg sid "$SESSION_ID" --argjson cost "$COST" '
@@ -174,11 +174,11 @@ if [ -n "$TRANSCRIPT_PATH" ] && [ -f "$TRANSCRIPT_PATH" ]; then
     AGENTS_RAW=$(awk -F'\t' '$1=="Agent" && $2!="" { print $2 }' <<< "$ACTIVE")
     TOOLS_RAW=$(awk -F'\t' '$1!="Agent" { print $1 }' <<< "$ACTIVE")
     if [ -n "$AGENTS_RAW" ]; then
-      ACTIVE_AGENT_COUNT=$(wc -l <<< "$AGENTS_RAW" | tr -d ' ')
+      readarray -t _agents <<< "$AGENTS_RAW"; ACTIVE_AGENT_COUNT=${#_agents[@]}
       ACTIVE_AGENTS=$(paste -sd, <<< "$AGENTS_RAW")
     fi
     if [ -n "$TOOLS_RAW" ]; then
-      RUNNING_TOOL_COUNT=$(wc -l <<< "$TOOLS_RAW" | tr -d ' ')
+      readarray -t _tools <<< "$TOOLS_RAW"; RUNNING_TOOL_COUNT=${#_tools[@]}
       RUNNING_TOOLS=$(paste -sd, <<< "$TOOLS_RAW")
     fi
     # Last Agent invocation, regardless of completion — fallback for the L3
@@ -220,7 +220,7 @@ if [ -f "$HISTORY_FILE" ] && [ -n "$SESSION_ID" ]; then
     LAST_PROMPT=$(jq -r '.display // "" | gsub("\\s+"; " ")' <<< "$LAST_ENTRY")
     LAST_PROMPT_TIME_MS=$(jq -r '.timestamp // 0' <<< "$LAST_ENTRY")
     if [ "$LAST_PROMPT_TIME_MS" -gt 0 ]; then
-      LAST_PROMPT_TIME=$(date -d "@$((LAST_PROMPT_TIME_MS / 1000))" +"%H:%M" 2>/dev/null)
+      printf -v LAST_PROMPT_TIME '%(%H:%M)T' $((LAST_PROMPT_TIME_MS / 1000))
     fi
     if [ ${#LAST_PROMPT} -gt 60 ]; then
       LAST_PROMPT="${LAST_PROMPT:0:57}..."
@@ -259,8 +259,7 @@ fmt_dur() {
 # ── Helper: format countdown from epoch ───────────────────────
 fmt_countdown() {
   local reset_at=$1
-  local now=$(date +%s)
-  local diff=$(( reset_at - now ))
+  local diff=$(( reset_at - EPOCHSECONDS ))
   if [ "$diff" -le 0 ]; then echo "now"; return; fi
   local h=$(( diff / 3600 ))
   local m=$(( (diff % 3600) / 60 ))
@@ -271,10 +270,11 @@ fmt_countdown() {
 fmt_tokens() {
   local t=$1
   if [ -z "$t" ] || [ "$t" = "null" ]; then echo "0"; return; fi
+  # Integer division truncates, and so did `bc` with scale=1 — exact substitution.
   if [ "$t" -ge 1000000 ]; then
-    printf "%.1fM" "$(echo "scale=1; $t / 1000000" | bc)"
+    printf "%d.%dM" $((t / 1000000)) $((t % 1000000 * 10 / 1000000))
   elif [ "$t" -ge 1000 ]; then
-    printf "%.1fK" "$(echo "scale=1; $t / 1000" | bc)"
+    printf "%d.%dK" $((t / 1000)) $((t % 1000 * 10 / 1000))
   else
     echo "$t"
   fi
@@ -308,12 +308,16 @@ CTX_LABEL=""
 
 # ── Git info ──────────────────────────────────────────────────
 BRANCH=""
-git rev-parse --git-dir > /dev/null 2>&1 && BRANCH="$(git branch --show-current 2>/dev/null)"
+IS_GIT=0
+git rev-parse --git-dir > /dev/null 2>&1 && IS_GIT=1
+[ "$IS_GIT" -eq 1 ] && BRANCH="$(git branch --show-current 2>/dev/null)"
 
 REPO_LINK="${DIR##*/}"
-REMOTE=$(git remote get-url origin 2>/dev/null | sed 's/git@github.com:/https:\/\/github.com\//' | sed 's/\.git$//')
+REMOTE=$(git remote get-url origin 2>/dev/null)
+REMOTE=${REMOTE/git@github.com:/https:\/\/github.com\/}
+REMOTE=${REMOTE%.git}
 if [ -n "$REMOTE" ]; then
-  REPO_NAME=$(basename "$REMOTE")
+  REPO_NAME=${REMOTE##*/}
   REPO_LINK=$(printf '%b' "\e]8;;${REMOTE}\a${REPO_NAME}\e]8;;\a")
 fi
 
@@ -341,9 +345,9 @@ HAS_HALF=0
 [ "$PCT" -gt 0 ] && [ $((PCT % 10)) -gt 0 ] && [ "$FULL" -lt "$BAR_W" ] && HAS_HALF=1
 EMPTY=$((BAR_W - FULL - HAS_HALF))
 BAR=""
-for i in $(seq 1 $FULL); do BAR="${BAR}${BAR_COLOR}●${RESET}"; done
+for ((i = 0; i < FULL; i++)); do BAR="${BAR}${BAR_COLOR}●${RESET}"; done
 [ "$HAS_HALF" -eq 1 ] && BAR="${BAR}${BAR_COLOR}◐${RESET}"
-for i in $(seq 1 $EMPTY); do BAR="${BAR}${DIM}●${RESET}"; done
+for ((i = 0; i < EMPTY; i++)); do BAR="${BAR}${DIM}●${RESET}"; done
 
 # ── Duration ──────────────────────────────────────────────────
 # Status: DISABLED — display not currently rendered on any L1–L4 line.
@@ -363,16 +367,25 @@ GIT_D=0
 GIT_LINES_ADD=0
 GIT_LINES_DEL=0
 GIT_COMMIT=""
-if git rev-parse --git-dir > /dev/null 2>&1; then
-  GIT_M=$(git diff --name-only 2>/dev/null | wc -l | tr -d ' ')
-  GIT_A=$(git ls-files --others --exclude-standard 2>/dev/null | wc -l | tr -d ' ')
-  GIT_D=$(git diff --diff-filter=D --name-only 2>/dev/null | wc -l | tr -d ' ')
+if [ "$IS_GIT" -eq 1 ]; then
+  # One porcelain pass replaces three `git diff`/`ls-files` calls. Keys on the
+  # WORKTREE column (Y), matching `git diff --name-only`'s unstaged-only scope —
+  # keying on X would newly count staged-only files. `-uall` is required: plain
+  # porcelain collapses an untracked directory to one entry, `ls-files --others`
+  # lists every file inside it.
+  while IFS= read -r _line; do
+    case "${_line:0:2}" in
+      '??') GIT_A=$((GIT_A + 1)) ;;
+      ?D)   GIT_D=$((GIT_D + 1)); GIT_M=$((GIT_M + 1)) ;;
+      ?[!\ ]) GIT_M=$((GIT_M + 1)) ;;
+    esac
+  done < <(git status --porcelain -uall 2>/dev/null)
   # Working-tree +N/-N from shortstat (staged + unstaged); untracked file lines not counted.
   _shortstat=$(git diff HEAD --shortstat 2>/dev/null)
-  GIT_LINES_ADD=$(echo "$_shortstat" | grep -oE '[0-9]+ insertion' | grep -oE '[0-9]+' | head -1)
-  GIT_LINES_DEL=$(echo "$_shortstat" | grep -oE '[0-9]+ deletion' | grep -oE '[0-9]+' | head -1)
-  GIT_LINES_ADD=${GIT_LINES_ADD:-0}
-  GIT_LINES_DEL=${GIT_LINES_DEL:-0}
+  GIT_LINES_ADD=0
+  GIT_LINES_DEL=0
+  [[ $_shortstat =~ ([0-9]+)\ insertion ]] && GIT_LINES_ADD=${BASH_REMATCH[1]}
+  [[ $_shortstat =~ ([0-9]+)\ deletion ]] && GIT_LINES_DEL=${BASH_REMATCH[1]}
   GIT_COMMIT=$(git rev-parse --short HEAD 2>/dev/null)
 fi
 
