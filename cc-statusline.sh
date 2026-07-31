@@ -96,11 +96,10 @@ PROJECT_DIR=${F[22]}       # → L1 PWD subpath
 # ── Effort / thinking level (from settings.json) ──────────────
 EFFORT=$(jq -r '.effortLevel // empty' "$HOME/.claude/settings.json" 2>/dev/null)
 if [ -z "$EFFORT" ]; then
-  # Default per model (mirrors claude-dashboard's getDefaultEffort)
+  # Default per model
   case "$MODEL" in
-    *Opus*)   EFFORT=xhigh ;;
-    *Sonnet*) EFFORT=medium ;;
-    *)        EFFORT=high ;;
+    *Opus*) EFFORT=medium ;;
+    *)      EFFORT=high ;;
   esac
 fi
 case "$EFFORT" in
