@@ -335,7 +335,8 @@ if ($null -ne $CtxEff -and $CtxEff -gt 0) { $CtxLabel = "${Dim}$(Format-Window $
 # ── Git info ──────────────────────────────────────────────────
 $Branch = ''
 & git rev-parse --git-dir 2>$null 1>$null
-if ($LASTEXITCODE -eq 0) {
+$IsGit = ($LASTEXITCODE -eq 0)
+if ($IsGit) {
     $Branch = (& git branch --show-current 2>$null)
 }
 
@@ -382,8 +383,7 @@ for ($i = 0; $i -lt $Empty; $i++) { $Bar += "$Dim$([char]0x25CF)$Reset" }
 
 # ── Git file stats (M/A/D counts + working-tree line diff) ────
 $GitM = 0; $GitA = 0; $GitD = 0; $GitLinesAdd = 0; $GitLinesDel = 0; $GitCommit = ''
-& git rev-parse --git-dir 2>$null 1>$null
-if ($LASTEXITCODE -eq 0) {
+if ($IsGit) {
     $GitM = @(& git diff --name-only 2>$null).Count
     $GitA = @(& git ls-files --others --exclude-standard 2>$null).Count
     $GitD = @(& git diff --diff-filter=D --name-only 2>$null).Count
