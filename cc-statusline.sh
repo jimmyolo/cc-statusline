@@ -319,7 +319,18 @@ git rev-parse --git-dir > /dev/null 2>&1 && IS_GIT=1
 # Detached HEAD (checkout of a sha, rebase, bisect) prints nothing. Without a
 # placeholder the whole (branch* M A D +N -N) block on L1 is suppressed, taking
 # the working-tree stats with it. The @<hash> rendered right after names the commit.
-[ "$IS_GIT" -eq 1 ] && [ -z "$BRANCH" ] && BRANCH="detached"
+#
+#   git checkout origin/main  → origin/main   (a ref actually asked for)
+#   git checkout <sha>        → detached      (nothing to name it)
+#
+# Scoped to refs/remotes/origin on purpose: `git name-rev` resolves to ANY ref at
+# the commit, including an unrelated worktree branch, and would show a name the
+# user is not on. The extra spawn only runs on this rare path.
+if [ "$IS_GIT" -eq 1 ] && [ -z "$BRANCH" ]; then
+  BRANCH=$(git for-each-ref --count=1 --points-at HEAD \
+             --format='%(refname:short)' refs/remotes/origin 2>/dev/null)
+  [ -z "$BRANCH" ] && BRANCH="detached"
+fi
 
 REPO_LINK="${DIR##*/}"
 REMOTE=$(git remote get-url origin 2>/dev/null)

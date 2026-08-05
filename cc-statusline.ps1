@@ -341,6 +341,17 @@ if ($IsGit) {
     # Detached HEAD (checkout of a sha, rebase, bisect) prints nothing. Without a
     # placeholder the whole (branch* M A D +N -N) block on L1 is suppressed, taking
     # the working-tree stats with it. The @<hash> after it names the commit.
+    #
+    #   git checkout origin/main  -> origin/main   (a ref actually asked for)
+    #   git checkout <sha>        -> detached      (nothing to name it)
+    #
+    # Scoped to refs/remotes/origin on purpose: `git name-rev` resolves to ANY ref
+    # at the commit, including an unrelated worktree branch, and would show a name
+    # the user is not on. The extra spawn only runs on this rare path.
+    if (-not $Branch) {
+        $Branch = (& git for-each-ref --count=1 --points-at HEAD `
+                     --format='%(refname:short)' refs/remotes/origin 2>$null)
+    }
     if (-not $Branch) { $Branch = 'detached' }
 }
 

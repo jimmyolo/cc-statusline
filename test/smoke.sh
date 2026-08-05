@@ -84,6 +84,34 @@ check "(active) no raw CR in output"        '! grep -q $'"'"'\r'"'"' <<< "$out2"
 check "(active) contains todos progress"    'grep -q "todos 1/2" <<< "$plain2"'
 check "(active) contains current todo"      'grep -q "second" <<< "$plain2"'
 
+# ── Third pass: branch label, in a throwaway repo ──────────────────────────
+# Runs from a scratch repo because the label depends on the cwd's git state.
+# The decoy branch sits on the same commit as case 2 — it must NOT be picked.
+echo
+echo "Running branch-label cases in a scratch repo…"
+REPO_TMP=$(mktemp -d -t cc-statusline-smoke.XXXXXX)
+trap 'rm -f "$TRANSCRIPT_TMP"; rm -rf "$REPO_TMP"' EXIT
+(
+  cd "$REPO_TMP"
+  git init -q -b main
+  git config user.email t@t && git config user.name t
+  echo one > f && git add f && git commit -qm one
+  git branch decoy
+  echo two > f && git commit -qam two
+  git update-ref refs/remotes/origin/main HEAD
+) > /dev/null 2>&1
+
+label() {  # $1 = revision to check out; echoes the (…) group from L1
+  git -C "$REPO_TMP" checkout -q "$1"
+  ( cd "$REPO_TMP" && bash "$SCRIPT" < "$SAMPLE" 2>/dev/null ) \
+    | sed -E 's/\x1b\[[0-9;]*[a-zA-Z]//g; s/\x1b\]8;;[^\x07]*\x07//g' \
+    | head -1 | grep -oE '\([^)]*\)' | tail -1
+}
+
+check "(git) detached at origin ref → ref name" '[ "$(label main~0)" = "(origin/main)" ]'
+check "(git) detached, no origin ref → literal" '[ "$(label decoy~0)" = "(detached)" ]'
+check "(git) on a branch → branch name"         '[ "$(label main)" = "(main)" ]'
+
 echo
 echo "Result: $pass passed, $fail failed."
 [ "$fail" -eq 0 ]
