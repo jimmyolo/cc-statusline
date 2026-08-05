@@ -155,15 +155,16 @@ TODO_TOTAL=0
 TODO_CURRENT=""
 if [ -n "$TRANSCRIPT_PATH" ] && [ -f "$TRANSCRIPT_PATH" ]; then
   # Pass 1: every tool_use (id, name, subagent_type) — pre-filtered with grep
-  # `description` is free text and can carry newlines/tabs. Left raw it splits one
-  # record across several lines, and every continuation line then parses as a
-  # never-completed tool_use with an empty name — the `tools` widget renders it as
-  # a run of bare commas. Flatten the separators so one record stays one line.
+  # `description` is free text and can carry any whitespace. Left raw, a newline
+  # splits one record across several lines, and every continuation line then parses
+  # as a never-completed tool_use with an empty name — the `tools` widget renders it
+  # as a run of bare commas; a CR survives to stdout and rewinds the drawn line.
+  # Collapse whitespace so one record stays one line (same idiom as LAST_PROMPT).
   TOOL_USES=$(tail -n "$TRANSCRIPT_TAIL_LINES" "$TRANSCRIPT_PATH" 2>/dev/null \
     | grep -F '"type":"tool_use"' \
     | jq -r 'select(.type=="assistant") | .message.content[]?
              | select(.type=="tool_use")
-             | "\(.id)\t\(.name)\t\(.input.subagent_type // "")\t\((.input.description // "") | gsub("[\n\t]"; " "))"' 2>/dev/null)
+             | "\(.id)\t\(.name)\t\(.input.subagent_type // "")\t\((.input.description // "") | gsub("\\s+"; " "))"' 2>/dev/null)
   # Pass 2: completed tool_use_ids
   COMPLETED=$(tail -n "$TRANSCRIPT_TAIL_LINES" "$TRANSCRIPT_PATH" 2>/dev/null \
     | grep -F '"tool_use_id":"toolu_' \
