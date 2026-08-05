@@ -58,6 +58,7 @@ TRANSCRIPT_TMP=$(mktemp -t cc-statusline-smoke.XXXXXX.jsonl)
 trap 'rm -f "$TRANSCRIPT_TMP"' EXIT
 cat > "$TRANSCRIPT_TMP" <<'JSONL'
 {"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_agent","name":"Agent","input":{"subagent_type":"reviewer-opus-high"}}]}}
+{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_multiline","name":"Bash","input":{"description":"first line\nsecond line\nthird line"}}]}}
 {"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_read","name":"Read","input":{"file_path":"/tmp/x"}}]}}
 {"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_todo","name":"TodoWrite","input":{"todos":[{"content":"first","status":"completed"},{"content":"second","status":"in_progress"}]}}]}}
 {"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_todo","content":"ok"}]}}
@@ -70,7 +71,10 @@ echo "$plain2" | sed 's/^/  | /'
 echo
 
 check "(active) contains agents indicator"  'grep -qE "(◐|✓) reviewer-opus-high" <<< "$plain2"'
-check "(active) contains tools indicator"   'grep -q "tools Read" <<< "$plain2"'
+check "(active) contains tools indicator"   'grep -q "tools Bash,Read" <<< "$plain2"'
+# A multi-line `description` used to split its record across lines; each continuation
+# parsed as a nameless never-completed tool_use, rendering as bare commas.
+check "(active) no phantom empty tools"     '! grep -qE "tools ,|,," <<< "$plain2"'
 check "(active) contains todos progress"    'grep -q "todos 1/2" <<< "$plain2"'
 check "(active) contains current todo"      'grep -q "second" <<< "$plain2"'
 
