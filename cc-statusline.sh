@@ -155,11 +155,16 @@ TODO_TOTAL=0
 TODO_CURRENT=""
 if [ -n "$TRANSCRIPT_PATH" ] && [ -f "$TRANSCRIPT_PATH" ]; then
   # Pass 1: every tool_use (id, name, subagent_type) — pre-filtered with grep
+  # `description` is free text and can carry any whitespace. Left raw, a newline
+  # splits one record across several lines, and every continuation line then parses
+  # as a never-completed tool_use with an empty name — the `tools` widget renders it
+  # as a run of bare commas; a CR survives to stdout and rewinds the drawn line.
+  # Collapse whitespace so one record stays one line (same idiom as LAST_PROMPT).
   TOOL_USES=$(tail -n "$TRANSCRIPT_TAIL_LINES" "$TRANSCRIPT_PATH" 2>/dev/null \
     | grep -F '"type":"tool_use"' \
     | jq -r 'select(.type=="assistant") | .message.content[]?
              | select(.type=="tool_use")
-             | "\(.id)\t\(.name)\t\(.input.subagent_type // "")\t\(.input.description // "")"' 2>/dev/null)
+             | "\(.id)\t\(.name)\t\(.input.subagent_type // "")\t\((.input.description // "") | gsub("\\s+"; " "))"' 2>/dev/null)
   # Pass 2: completed tool_use_ids
   COMPLETED=$(tail -n "$TRANSCRIPT_TAIL_LINES" "$TRANSCRIPT_PATH" 2>/dev/null \
     | grep -F '"tool_use_id":"toolu_' \
@@ -311,6 +316,10 @@ BRANCH=""
 IS_GIT=0
 git rev-parse --git-dir > /dev/null 2>&1 && IS_GIT=1
 [ "$IS_GIT" -eq 1 ] && BRANCH="$(git branch --show-current 2>/dev/null)"
+# Detached HEAD (checkout of a sha, rebase, bisect) prints nothing. Without a
+# placeholder the whole (branch* M A D +N -N) block on L1 is suppressed, taking
+# the working-tree stats with it. The @<hash> rendered right after names the commit.
+[ "$IS_GIT" -eq 1 ] && [ -z "$BRANCH" ] && BRANCH="detached"
 
 REPO_LINK="${DIR##*/}"
 REMOTE=$(git remote get-url origin 2>/dev/null)

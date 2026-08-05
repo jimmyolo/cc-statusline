@@ -338,6 +338,10 @@ $Branch = ''
 $IsGit = ($LASTEXITCODE -eq 0)
 if ($IsGit) {
     $Branch = (& git branch --show-current 2>$null)
+    # Detached HEAD (checkout of a sha, rebase, bisect) prints nothing. Without a
+    # placeholder the whole (branch* M A D +N -N) block on L1 is suppressed, taking
+    # the working-tree stats with it. The @<hash> after it names the commit.
+    if (-not $Branch) { $Branch = 'detached' }
 }
 
 $RepoLink = Split-Path -Leaf $Dir
