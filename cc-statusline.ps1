@@ -32,11 +32,17 @@
 #   L4: todos . last prompt (conditionally printed)
 # =============================================================================
 
-# The statusline emits non-ASCII glyphs (● ◐ ✓ 👤 ·). Without this, PowerShell
-# encodes stdout with the system ANSI codepage — cp950 on a zh-TW Windows — while
-# the terminal decodes UTF-8, so `·` (Big5 A1 50) arrives as "�P" and 👤,
-# which Big5 cannot represent at all, arrives as "??".
-[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+<#
+  Both console streams inherit the Windows console codepage (cp950 on zh-TW),
+  which mangles the statusline's non-ASCII glyphs on the way out and the piped
+  JSON on the way in. Two constraints:
+    - InputEncoding must be set before the first [Console]::In access; the
+      StreamReader is built once and cached.
+    - The setters throw when the process has no console handle. Failing to set
+      them must degrade to mojibake, never to no output at all.
+#>
+try { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false) } catch { }
+try { [Console]::InputEncoding = [System.Text.UTF8Encoding]::new($false) } catch { }
 
 # ── Colors (real control chars, not deferred-interpretation like bash's echo -e) ──
 $Esc = [char]27
