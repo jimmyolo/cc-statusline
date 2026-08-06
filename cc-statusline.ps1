@@ -32,6 +32,18 @@
 #   L4: todos . last prompt (conditionally printed)
 # =============================================================================
 
+<#
+  Both console streams inherit the Windows console codepage (cp950 on zh-TW),
+  which mangles the statusline's non-ASCII glyphs on the way out and the piped
+  JSON on the way in. Two constraints:
+    - InputEncoding must be set before the first [Console]::In access; the
+      StreamReader is built once and cached.
+    - The setters throw when the process has no console handle. Failing to set
+      them must degrade to mojibake, never to no output at all.
+#>
+try { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false) } catch { }
+try { [Console]::InputEncoding = [System.Text.UTF8Encoding]::new($false) } catch { }
+
 # ── Colors (real control chars, not deferred-interpretation like bash's echo -e) ──
 $Esc = [char]27
 $Bel = [char]7
