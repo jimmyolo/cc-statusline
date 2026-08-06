@@ -32,6 +32,12 @@
 #   L4: todos . last prompt (conditionally printed)
 # =============================================================================
 
+# The statusline emits non-ASCII glyphs (● ◐ ✓ 👤 ·). Without this, PowerShell
+# encodes stdout with the system ANSI codepage — cp950 on a zh-TW Windows — while
+# the terminal decodes UTF-8, so `·` (Big5 A1 50) arrives as "�P" and 👤,
+# which Big5 cannot represent at all, arrives as "??".
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+
 # ── Colors (real control chars, not deferred-interpretation like bash's echo -e) ──
 $Esc = [char]27
 $Bel = [char]7
