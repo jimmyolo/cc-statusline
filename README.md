@@ -73,7 +73,7 @@ Requires PowerShell 7+ (`pwsh`) — Windows PowerShell 5.1 does not have the `??
 
 Field map, layout, and output are intended to be byte-identical to `cc-statusline.sh` for the same input — verified against `test/sample.json` and an active-transcript fixture (see [Testing](#testing)). Two trade-offs worth knowing before you rely on it:
 
-- **Higher per-invocation floor.** PowerShell/.NET startup + cmdlet JIT warmup + the ~8 external `git` calls the script makes measure around 600–700ms end to end, versus bash's ~63ms. This is inherent to the runtime (same category of trade-off as the Node.js option that was passed over for the bash version), not something this script can optimize away without a much larger rewrite (e.g. a git library binding instead of shelling out).
+- **Higher per-invocation floor.** PowerShell/.NET startup + cmdlet JIT warmup + the ~8 external `git` calls the script makes measure around 600–700ms end to end, versus bash's ~60ms. This is inherent to the runtime (same category of trade-off as the Node.js option that was passed over for the bash version), not something this script can optimize away without a much larger rewrite (e.g. a git library binding instead of shelling out).
 - **Verified on Linux `pwsh`, not Windows Terminal.** Development/testing here ran on a portable `pwsh` on Linux — that confirms the logic and output are correct, but *not* how ANSI color, OSC 8 hyperlinks, or emoji width actually render in Windows Terminal / VS Code's integrated terminal. Sanity-check the rendered output there before trusting it blind.
 
 ## Field reference

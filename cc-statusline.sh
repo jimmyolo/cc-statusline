@@ -366,7 +366,15 @@ fi
 # ── Git info ──────────────────────────────────────────────────
 BRANCH=""
 IS_GIT=0
-git rev-parse --git-dir > /dev/null 2>&1 && IS_GIT=1
+GIT_COMMIT=""
+# One rev-parse answers both questions. It resolves arguments in order and
+# prints each as it goes, so a repo with no commit yet still emits the git-dir
+# line before HEAD fails — the exit status reflects only the last argument, so
+# key on the lines, never on $?.
+{ read -r _gitdir; read -r GIT_COMMIT; } < <(
+  git rev-parse --git-dir --short HEAD 2>/dev/null
+)
+[ -n "$_gitdir" ] && IS_GIT=1
 [ "$IS_GIT" -eq 1 ] && BRANCH="$(git branch --show-current 2>/dev/null)"
 # Detached HEAD (checkout of a sha, rebase, bisect) prints nothing. Without a
 # placeholder the whole (branch* M A D +N -N) block on L1 is suppressed, taking
@@ -442,7 +450,6 @@ GIT_A=0
 GIT_D=0
 GIT_LINES_ADD=0
 GIT_LINES_DEL=0
-GIT_COMMIT=""
 if [ "$IS_GIT" -eq 1 ]; then
   # One porcelain pass replaces three `git diff`/`ls-files` calls. Keys on the
   # WORKTREE column (Y), matching `git diff --name-only`'s unstaged-only scope —
@@ -462,7 +469,6 @@ if [ "$IS_GIT" -eq 1 ]; then
   GIT_LINES_DEL=0
   [[ $_shortstat =~ ([0-9]+)\ insertion ]] && GIT_LINES_ADD=${BASH_REMATCH[1]}
   [[ $_shortstat =~ ([0-9]+)\ deletion ]] && GIT_LINES_DEL=${BASH_REMATCH[1]}
-  GIT_COMMIT=$(git rev-parse --short HEAD 2>/dev/null)
 fi
 
 # ── Cache hit rate ────────────────────────────────────────────
@@ -480,8 +486,15 @@ fi
 # Source: .oauthAccount — not in statusline stdin JSON, read directly like EFFORT.
 # Display: displayName + redacted email (local part masked to first char).
 ACCOUNT=""
-ACCT_NAME=$(jq -r '.oauthAccount.displayName // empty' "$HOME/.claude.json" 2>/dev/null)
-ACCT_EMAIL=$(jq -r '.oauthAccount.emailAddress // empty' "$HOME/.claude.json" 2>/dev/null)
+# One jq, two lines: ~/.claude.json is ~140KB, so parsing it twice costs more
+# than everything else on this path. `// ""` rather than `// empty` — a dropped
+# line would shift the email into the name.
+ACCT_NAME=""
+ACCT_EMAIL=""
+{ read -r ACCT_NAME; read -r ACCT_EMAIL; } < <(
+  jq -r '(.oauthAccount.displayName // ""), (.oauthAccount.emailAddress // "")' \
+     "$HOME/.claude.json" 2>/dev/null
+)
 ACCT_REDACTED=""
 if [ -n "$ACCT_EMAIL" ]; then
   ACCT_REDACTED="${ACCT_EMAIL%%@*}"
