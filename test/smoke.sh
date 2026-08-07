@@ -90,7 +90,9 @@ check "(active) contains current todo"      'grep -q "second" <<< "$plain2"'
 
 # ── Third pass: branch label, in a throwaway repo ──────────────────────────
 # Runs from a scratch repo because the label depends on the cwd's git state.
-# The decoy branch sits on the same commit as case 2 — it must NOT be picked.
+# Two traps are laid on purpose, both on commits the cases land on:
+#   decoy       — a local branch; `git name-rev` would pick it (issue #9)
+#   origin/HEAD — shortens to the bare `origin` and sorts first (issue #12)
 echo
 echo "Running branch-label cases in a scratch repo…"
 REPO_TMP=$(mktemp -d -t cc-statusline-smoke.XXXXXX)
@@ -103,6 +105,7 @@ trap 'rm -f "$TRANSCRIPT_TMP"; rm -rf "$REPO_TMP"' EXIT
   git branch decoy
   echo two > f && git commit -qam two
   git update-ref refs/remotes/origin/main HEAD
+  git symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
 ) > /dev/null 2>&1
 
 label() {  # $1 = revision to check out; echoes the (…) group from L1
