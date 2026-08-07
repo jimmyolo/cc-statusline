@@ -15,6 +15,10 @@ $Sample = Join-Path $ScriptDir 'sample.json'
 $PwshExeName = if ($IsWindows) { 'pwsh.exe' } else { 'pwsh' }
 $PwshExe = Join-Path $PSHOME $PwshExeName
 
+# Inherited from the developer's own shell, this rewrites the window label and
+# would make every other assertion depend on their environment.
+$env:CLAUDE_AUTOCOMPACT_PCT_OVERRIDE = $null
+
 $Pass = 0
 $Fail = 0
 function Test-Check {
@@ -79,6 +83,33 @@ try {
 } finally {
     Remove-Item -Path $TranscriptTmp -ErrorAction SilentlyContinue
 }
+
+# ── Third pass: CLAUDE_AUTOCOMPACT_PCT_OVERRIDE ────────────────────────────
+# The bar divides by the override'd budget, so a wrong parse is invisible in the
+# label but silently wrong in the %; both are asserted.
+Write-Output ""
+Write-Output "Running auto-compact percentage override cases..."
+function Get-WindowLabel {
+    param([string]$Value)   # '' = unset
+    $env:CLAUDE_AUTOCOMPACT_PCT_OVERRIDE = if ($Value -eq '') { $null } else { $Value }
+    try {
+        $o = Get-Content -Raw $Sample | & $PwshExe -NoProfile -File $Script
+        $p = ($o -join "`n") -replace "`e\[[0-9;]*[a-zA-Z]", '' -replace "`e\]8;;[^`a]*`a", ''
+        $lines = $p -split "`n"
+        $win = if ($lines[0] -match '\(M\) ([^|]*) \|') { $Matches[1] } else { '?' }
+        $bar = if ($lines[1] -match '([0-9]+%)') { $Matches[1] } else { '?' }
+        "$win $bar"
+    } finally {
+        $env:CLAUDE_AUTOCOMPACT_PCT_OVERRIDE = $null
+    }
+}
+
+$Dot = [char]0x00B7
+Test-Check "(pct) unset -> plain window, 5%"  ((Get-WindowLabel '') -eq '1M 5%')
+Test-Check "(pct) 50 -> halved budget, 10%"   ((Get-WindowLabel '50') -eq "500K (1M${Dot}50%) 10%")
+Test-Check "(pct) decimals kept"              ((Get-WindowLabel '33.3') -eq "333K (1M${Dot}33.3%) 15%")
+Test-Check "(pct) non-numeric ignored"        ((Get-WindowLabel 'abc') -eq '1M 5%')
+Test-Check "(pct) out of range ignored"       ((Get-WindowLabel '150') -eq '1M 5%')
 
 Write-Output ""
 Write-Output "Result: $Pass passed, $Fail failed."

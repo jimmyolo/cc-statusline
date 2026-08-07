@@ -331,6 +331,29 @@ $Acw = $env:CLAUDE_CODE_AUTO_COMPACT_WINDOW
 if ($Acw -match '^\d+$' -and [int64]$Acw -gt 0) {
     if ($null -eq $CtxEff -or [int64]$Acw -lt $CtxEff) { $CtxEff = [int64]$Acw }
 }
+
+<#
+  CLAUDE_AUTOCOMPACT_PCT_OVERRIDE (0-100) moves the compaction trigger down to
+  that share of the window, so the budget the bar should measure against is
+  smaller than the window itself:
+
+    CLI Rko():  threshold = min(floor(window * pct/100), window - 13000)
+
+  The second arm is deliberately not reproduced -- with no override this script
+  already treats the whole window as 100%, so applying it only here would make
+  the two paths disagree about the same session.
+#>
+$CtxFull = $CtxEff
+$Acp = $env:CLAUDE_AUTOCOMPACT_PCT_OVERRIDE
+$AcpOn = $false
+if ($null -ne $CtxEff -and $Acp -match '^\d+(\.\d+)?$') {
+    $AcpVal = [double]$Acp
+    if ($AcpVal -gt 0 -and $AcpVal -le 100) {
+        $AcpEff = [int64][math]::Floor($CtxFull * $AcpVal / 100)
+        if ($AcpEff -gt 0) { $CtxEff = $AcpEff; $AcpOn = $true }
+    }
+}
+
 $CurTokens = [int64]0
 foreach ($t in @($CurInput, $CacheRead, $CacheCreate)) {
     if ($null -ne $t -and $t -ne '') { $CurTokens += [int64]$t }
@@ -341,8 +364,16 @@ if ($null -ne $CtxEff -and $CtxEff -gt 0 -and $CurTokens -gt 0) {
 }
 
 # ── Context window size label ─────────────────────────────────
+# Budget first, since that is what the bar's % divides by; the full window
+# stays visible behind it, separated by U+00B7: 500K (1M.50%).
 $CtxLabel = ''
-if ($null -ne $CtxEff -and $CtxEff -gt 0) { $CtxLabel = "${Dim}$(Format-Window $CtxEff)${Reset}" }
+if ($null -ne $CtxEff -and $CtxEff -gt 0) {
+    if ($AcpOn) {
+        $CtxLabel = "${Dim}$(Format-Window $CtxEff) ($(Format-Window $CtxFull)$([char]0x00B7)${Acp}%)${Reset}"
+    } else {
+        $CtxLabel = "${Dim}$(Format-Window $CtxEff)${Reset}"
+    }
+}
 
 # ── Git info ──────────────────────────────────────────────────
 $Branch = ''

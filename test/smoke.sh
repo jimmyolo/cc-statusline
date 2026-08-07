@@ -12,6 +12,10 @@ ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 SCRIPT="$ROOT/cc-statusline.sh"
 SAMPLE="$SCRIPT_DIR/sample.json"
 
+# Inherited from the developer's own shell, this rewrites the window label and
+# would make every other assertion depend on their environment.
+unset CLAUDE_AUTOCOMPACT_PCT_OVERRIDE
+
 fail=0
 pass=0
 check() {
@@ -111,6 +115,26 @@ label() {  # $1 = revision to check out; echoes the (…) group from L1
 check "(git) detached at origin ref → ref name" '[ "$(label main~0)" = "(origin/main)" ]'
 check "(git) detached, no origin ref → literal" '[ "$(label decoy~0)" = "(detached)" ]'
 check "(git) on a branch → branch name"         '[ "$(label main)" = "(main)" ]'
+
+# ── Fourth pass: CLAUDE_AUTOCOMPACT_PCT_OVERRIDE ───────────────────────────
+# The bar divides by the override'd budget, so a wrong parse is invisible in the
+# label but silently wrong in the %; both are asserted.
+echo
+echo "Running auto-compact percentage override cases…"
+win() {  # $1 = env value ('' = unset); echoes L1's window label + L2's bar %
+  local out
+  if [ -z "$1" ]; then out=$(bash "$SCRIPT" < "$SAMPLE" 2>/dev/null)
+  else out=$(CLAUDE_AUTOCOMPACT_PCT_OVERRIDE="$1" bash "$SCRIPT" < "$SAMPLE" 2>/dev/null)
+  fi
+  printf '%s' "$out" | sed -E 's/\x1b\[[0-9;]*[a-zA-Z]//g; s/\x1b\]8;;[^\x07]*\x07//g' \
+    | sed -nE '1s/.*\(M\) ([^|]*) \|.*/\1/p; 2s/.*[● ] ([0-9]+%).*/ \1/p' | tr -d '\n'
+}
+
+check "(pct) unset → plain window, 5%"    '[ "$(win "")" = "1M 5%" ]'
+check "(pct) 50 → halved budget, 10%"     '[ "$(win 50)" = "500K (1M·50%) 10%" ]'
+check "(pct) decimals kept"               '[ "$(win 33.3)" = "333K (1M·33.3%) 15%" ]'
+check "(pct) non-numeric ignored"         '[ "$(win abc)" = "1M 5%" ]'
+check "(pct) out of range ignored"        '[ "$(win 150)" = "1M 5%" ]'
 
 echo
 echo "Result: $pass passed, $fail failed."

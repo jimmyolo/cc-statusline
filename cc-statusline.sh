@@ -301,6 +301,31 @@ ACW=${CLAUDE_CODE_AUTO_COMPACT_WINDOW:-}
 if [ -n "$ACW" ] && [ "$ACW" -gt 0 ] 2>/dev/null; then
   { [ -z "$CTX_EFF" ] || [ "$ACW" -lt "$CTX_EFF" ]; } && CTX_EFF=$ACW
 fi
+
+# CLAUDE_AUTOCOMPACT_PCT_OVERRIDE (0-100) moves the compaction trigger down to
+# that share of the window, so the budget the bar should measure against is
+# smaller than the window itself:
+#
+#   CLI Rko():  threshold = min(floor(window * pct/100), window - 13000)
+#
+# The second arm is deliberately not reproduced — with no override this script
+# already treats the whole window as 100%, so applying it only here would make
+# the two paths disagree about the same session.
+#
+# parseFloat accepts decimals, so hundredths are kept and the rest truncated;
+# scaling by 10000 keeps the whole computation in integer arithmetic.
+CTX_FULL=$CTX_EFF
+ACP=${CLAUDE_AUTOCOMPACT_PCT_OVERRIDE:-}
+ACP_ON=0
+if [ -n "$CTX_EFF" ] && [[ $ACP =~ ^([0-9]+)(\.([0-9]+))?$ ]]; then
+  _acp_frac="${BASH_REMATCH[3]}00"
+  _acp_x100=$(( 10#${BASH_REMATCH[1]} * 100 + 10#${_acp_frac:0:2} ))
+  if [ "$_acp_x100" -gt 0 ] && [ "$_acp_x100" -le 10000 ]; then
+    _acp_eff=$(( CTX_FULL * _acp_x100 / 10000 ))
+    [ "$_acp_eff" -gt 0 ] && { CTX_EFF=$_acp_eff; ACP_ON=1; }
+  fi
+fi
+
 CUR_TOKENS=$(( ${CUR_INPUT:-0} + ${CACHE_READ:-0} + ${CACHE_CREATE:-0} ))
 if [ -n "$CTX_EFF" ] && [ "$CTX_EFF" -gt 0 ] && [ "$CUR_TOKENS" -gt 0 ]; then
   PCT=$(( CUR_TOKENS * 100 / CTX_EFF ))
@@ -308,8 +333,16 @@ if [ -n "$CTX_EFF" ] && [ "$CTX_EFF" -gt 0 ] && [ "$CUR_TOKENS" -gt 0 ]; then
 fi
 
 # ── Context window size label ─────────────────────────────────
+# Budget first, since that is what the bar's % divides by; the full window
+# stays visible behind it — "500K (1M·50%)".
 CTX_LABEL=""
-[ -n "$CTX_EFF" ] && [ "$CTX_EFF" -gt 0 ] && CTX_LABEL="${DIM}$(fmt_window "$CTX_EFF")${RESET}"
+if [ -n "$CTX_EFF" ] && [ "$CTX_EFF" -gt 0 ]; then
+  if [ "$ACP_ON" -eq 1 ]; then
+    CTX_LABEL="${DIM}$(fmt_window "$CTX_EFF") ($(fmt_window "$CTX_FULL")·${ACP}%)${RESET}"
+  else
+    CTX_LABEL="${DIM}$(fmt_window "$CTX_EFF")${RESET}"
+  fi
+fi
 
 # ── Git info ──────────────────────────────────────────────────
 BRANCH=""
