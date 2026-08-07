@@ -414,8 +414,12 @@ if ($IsGit) {
     # Scoped to refs/remotes/origin on purpose: `git name-rev` resolves to ANY ref
     # at the commit, including an unrelated worktree branch, and would show a name
     # the user is not on. The extra spawn only runs on this rare path.
+    #
+    # origin/HEAD is excluded: it shortens to the bare remote name `origin`, and it
+    # sorts first, so --count=1 would return that instead of the branch it aliases.
     if (-not $Branch) {
         $Branch = (& git for-each-ref --count=1 --points-at HEAD `
+                     --exclude=refs/remotes/origin/HEAD `
                      --format='%(refname:short)' refs/remotes/origin 2>$null)
     }
     if (-not $Branch) { $Branch = 'detached' }
