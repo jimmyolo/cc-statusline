@@ -15,6 +15,10 @@ $Sample = Join-Path $ScriptDir 'sample.json'
 $PwshExeName = if ($IsWindows) { 'pwsh.exe' } else { 'pwsh' }
 $PwshExe = Join-Path $PSHOME $PwshExeName
 
+# Inherited from the developer's own shell, this rewrites the window label and
+# would make every other assertion depend on their environment.
+Remove-Item Env:\CLAUDE_AUTOCOMPACT_PCT_OVERRIDE -ErrorAction SilentlyContinue
+
 $Pass = 0
 $Fail = 0
 function Test-Check {
@@ -78,6 +82,56 @@ try {
     Test-Check "(active) contains current todo" ($plain2 -match 'second')
 } finally {
     Remove-Item -Path $TranscriptTmp -ErrorAction SilentlyContinue
+}
+
+# ── Third pass: CLAUDE_AUTOCOMPACT_PCT_OVERRIDE ────────────────────────────
+# The bar divides by the override'd budget, so a wrong parse is invisible in the
+# label but silently wrong in the %; both are asserted.
+Write-Output ""
+Write-Output "Running auto-compact percentage override cases..."
+$Bullet = [char]0x25CF
+function Get-WindowLabel {
+    param([string]$Value)   # 'UNSET' = variable removed, not set to ''
+    if ($Value -eq 'UNSET') {
+        Remove-Item Env:\CLAUDE_AUTOCOMPACT_PCT_OVERRIDE -ErrorAction SilentlyContinue
+    } else {
+        $env:CLAUDE_AUTOCOMPACT_PCT_OVERRIDE = $Value
+    }
+    try {
+        $o = Get-Content -Raw $Sample | & $PwshExe -NoProfile -File $Script
+        $p = ($o -join "`n") -replace "`e\[[0-9;]*[a-zA-Z]", '' -replace "`e\]8;;[^`a]*`a", ''
+        $lines = $p -split "`n"
+        $win = if ($lines[0] -match '\(M\) ([^|]*) \|') { $Matches[1] } else { '?' }
+        $bar = if ($lines[1] -match "[$Bullet ] ([0-9]+%)") { $Matches[1] } else { '?' }
+        "$win $bar"
+    } finally {
+        Remove-Item Env:\CLAUDE_AUTOCOMPACT_PCT_OVERRIDE -ErrorAction SilentlyContinue
+    }
+}
+
+$Dot = [char]0x00B7
+Test-Check "(pct) unset -> plain window, 5%"     ((Get-WindowLabel 'UNSET') -eq '1M 5%')
+Test-Check "(pct) set-but-empty -> plain window" ((Get-WindowLabel '') -eq '1M 5%')
+Test-Check "(pct) 50 -> halved budget, 10%"      ((Get-WindowLabel '50') -eq "500K (1M${Dot}50%) 10%")
+Test-Check "(pct) decimals kept"                 ((Get-WindowLabel '33.3') -eq "333K (1M${Dot}33.3%) 15%")
+Test-Check "(pct) label normalised"              ((Get-WindowLabel '33.30') -eq "333K (1M${Dot}33.3%) 15%")
+Test-Check "(pct) non-numeric ignored"           ((Get-WindowLabel 'abc') -eq '1M 5%')
+Test-Check "(pct) out of range ignored"          ((Get-WindowLabel '150') -eq '1M 5%')
+# Boundaries where a truncate-then-range-check gets it wrong; both scripts must
+# agree on every one of them.
+Test-Check "(pct) 100 -> whole window"           ((Get-WindowLabel '100') -eq "1M (1M${Dot}100%) 5%")
+Test-Check "(pct) just over 100 ignored"         ((Get-WindowLabel '100.004') -eq '1M 5%')
+Test-Check "(pct) tiny fraction still applies"   ((Get-WindowLabel '0.001') -eq "0K (1M${Dot}0.001%) 100%")
+Test-Check "(pct) zero ignored"                  ((Get-WindowLabel '0') -eq '1M 5%')
+Test-Check "(pct) parseFloat prefix accepted"    ((Get-WindowLabel '50abc') -eq "500K (1M${Dot}50%) 10%")
+Test-Check "(pct) exponent notation rejected"    ((Get-WindowLabel '1e2') -eq '1M 5%')
+Test-Check "(pct) overlong digit run ignored"    ((Get-WindowLabel '99999999999999999999') -eq '1M 5%')
+
+$env:CLAUDE_CODE_AUTO_COMPACT_WINDOW = '200000'
+try {
+    Test-Check "(pct) applies to the ACW window" ((Get-WindowLabel '50') -eq "100K (200K${Dot}50%) 51%")
+} finally {
+    Remove-Item Env:\CLAUDE_CODE_AUTO_COMPACT_WINDOW -ErrorAction SilentlyContinue
 }
 
 Write-Output ""

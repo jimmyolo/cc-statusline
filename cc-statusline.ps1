@@ -331,6 +331,52 @@ $Acw = $env:CLAUDE_CODE_AUTO_COMPACT_WINDOW
 if ($Acw -match '^\d+$' -and [int64]$Acw -gt 0) {
     if ($null -eq $CtxEff -or [int64]$Acw -lt $CtxEff) { $CtxEff = [int64]$Acw }
 }
+
+<#
+  CLAUDE_AUTOCOMPACT_PCT_OVERRIDE moves the compaction trigger down to that
+  share of the window, so the budget the bar measures against shrinks with it:
+
+    CLI Rko():  threshold = min(floor(window * pct/100), window - 13000)
+
+  The second arm is deliberately not reproduced -- with no override this script
+  already treats the whole window as 100%, so applying it only here would make
+  the two paths disagree about the same session. Caveat: on a small window that
+  arm is the binding one (200K window, pct=95 -> CLI compacts at 187000 while
+  the bar divides by 190000).
+
+  The CLI parses with parseFloat, so the accepted form is a numeric prefix --
+  leading blanks, an optional '+', a leading '.', and a trailing non-numeric
+  tail are all tolerated. Exponent notation is the one parseFloat form
+  rejected: honouring only its mantissa would silently pick a wrong budget.
+  Six fractional digits are kept and the rest truncated; the digits are read as
+  integers rather than through [double], and [0-9] is spelled out because .NET's
+  \d also matches non-ASCII digits, so this script and the sh accept exactly the
+  same inputs.
+#>
+$CtxFull = $CtxEff
+$Acp = $env:CLAUDE_AUTOCOMPACT_PCT_OVERRIDE
+$AcpOn = $false
+$AcpLabel = ''
+if ($null -ne $CtxEff -and $Acp -match '^[ \t]*\+?([0-9]*)(\.([0-9]*))?') {
+    $AcpInt = $Matches[1]
+    $AcpFrac = if ($null -ne $Matches[3]) { $Matches[3] } else { '' }
+    $AcpRest = "$Acp".Substring($Matches[0].Length)
+    if ("$AcpInt$AcpFrac" -ne '' -and $AcpInt.Length -le 3 -and $AcpRest -notmatch '^[eE]') {
+        $AcpFrac = ($AcpFrac + '000000').Substring(0, 6)
+        $AcpX = [int64]"0$AcpInt" * 1000000 + [int64]$AcpFrac
+        if ($AcpX -gt 0 -and $AcpX -le 100000000) {
+            $AcpEff = [int64][math]::Floor(($CtxFull * $AcpX) / 100000000)
+            if ($AcpEff -gt 0) {
+                $CtxEff = $AcpEff
+                $AcpOn = $true
+                $AcpLabel = [string][int64]"0$AcpInt"
+                $AcpFrac = $AcpFrac -replace '0+$', ''
+                if ($AcpFrac -ne '') { $AcpLabel = "$AcpLabel.$AcpFrac" }
+            }
+        }
+    }
+}
+
 $CurTokens = [int64]0
 foreach ($t in @($CurInput, $CacheRead, $CacheCreate)) {
     if ($null -ne $t -and $t -ne '') { $CurTokens += [int64]$t }
@@ -341,8 +387,16 @@ if ($null -ne $CtxEff -and $CtxEff -gt 0 -and $CurTokens -gt 0) {
 }
 
 # ── Context window size label ─────────────────────────────────
+# Budget first, since that is what the bar's % divides by; the full window
+# stays visible behind it, separated by U+00B7: 500K (1M<U+00B7>50%).
 $CtxLabel = ''
-if ($null -ne $CtxEff -and $CtxEff -gt 0) { $CtxLabel = "${Dim}$(Format-Window $CtxEff)${Reset}" }
+if ($null -ne $CtxEff -and $CtxEff -gt 0) {
+    if ($AcpOn) {
+        $CtxLabel = "${Dim}$(Format-Window $CtxEff) ($(Format-Window $CtxFull)$([char]0x00B7)${AcpLabel}%)${Reset}"
+    } else {
+        $CtxLabel = "${Dim}$(Format-Window $CtxEff)${Reset}"
+    }
+}
 
 # ── Git info ──────────────────────────────────────────────────
 $Branch = ''

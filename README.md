@@ -114,6 +114,12 @@ The full mapping (with paired-disable annotations) lives at the top of [`cc-stat
 
 The context bar and its `%` are **not** the `used_percentage` Claude Code sends on stdin. That field divides current usage by the *raw* model window (1,000,000 for `[1m]` models) and ignores `CLAUDE_CODE_AUTO_COMPACT_WINDOW`, while auto-compact measures against a window that *does* honour it — so with the env var set the bar could read ~17% at the moment compaction fires. Both scripts instead recompute against `CTX_EFF = min(context_window_size, CLAUDE_CODE_AUTO_COMPACT_WINDOW)`, and the L1 window label shows that same effective window. With the env var unset, `CTX_EFF` is just the model window and the displayed `%` matches stdin.
 
+`CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` moves the compaction trigger down to that share of the window, so it shrinks the budget again: `CTX_EFF = floor(window × pct / 100)`. When it is set, the L1 label carries both numbers — `500K (1M·50%)` — with the budget first, because that is what the bar's `%` divides by; the percentage is echoed normalised, so `33.30` renders as `33.3`.
+
+The accepted form follows the CLI's `parseFloat`: a numeric *prefix*, so leading blanks, a leading `+`, a leading `.` and a trailing non-numeric tail are all tolerated (`50abc` is 50%). Exponent notation is the one exception — honouring only its mantissa would silently pick a wrong budget, so `1e2` is rejected rather than read as 1%. Six fractional digits are kept and the rest truncated. Anything landing outside `0 < pct ≤ 100` after that, and any value small enough to truncate the budget to zero tokens, is ignored and the label falls back to the plain window.
+
+The CLI additionally clamps the trigger to `window − 13000`; that arm is not reproduced, since with no override these scripts already treat the whole window as 100%. It only binds on small windows: with a 200K window and `pct=95` the CLI compacts at 187,000 while the bar keeps dividing by 190,000, so the bar reads ~98% at the moment compaction fires.
+
 Disabled by default (one-line uncomment to re-enable — see [Customization](#customization)): per-message duration (`DUR`), tokens-per-minute burn rate, and current-usage detail (`cur N in / N read / N write`).
 
 ## Performance

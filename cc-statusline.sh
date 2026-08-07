@@ -301,6 +301,50 @@ ACW=${CLAUDE_CODE_AUTO_COMPACT_WINDOW:-}
 if [ -n "$ACW" ] && [ "$ACW" -gt 0 ] 2>/dev/null; then
   { [ -z "$CTX_EFF" ] || [ "$ACW" -lt "$CTX_EFF" ]; } && CTX_EFF=$ACW
 fi
+
+# CLAUDE_AUTOCOMPACT_PCT_OVERRIDE moves the compaction trigger down to that share
+# of the window, so the budget the bar measures against shrinks with it:
+#
+#   CLI Rko():  threshold = min(floor(window * pct/100), window - 13000)
+#
+# The second arm is deliberately not reproduced — with no override this script
+# already treats the whole window as 100%, so applying it only here would make
+# the two paths disagree about the same session. Caveat: on a small window that
+# arm is the binding one (200K window, pct=95 → CLI compacts at 187000 while the
+# bar divides by 190000).
+#
+# The CLI parses with parseFloat, so the accepted form is a numeric prefix —
+# leading blanks, an optional '+', a leading '.', and a trailing non-numeric tail
+# are all tolerated. Exponent notation is the one parseFloat form rejected:
+# honouring only its mantissa would silently pick a wrong budget.
+# Six fractional digits are kept and the rest truncated; scaling by 1e6 keeps the
+# arithmetic integer, and the range check runs on the scaled value so this script
+# and the ps1 accept exactly the same inputs.
+CTX_FULL=$CTX_EFF
+ACP=${CLAUDE_AUTOCOMPACT_PCT_OVERRIDE:-}
+ACP_ON=0
+ACP_LABEL=""
+if [ -n "$CTX_EFF" ] && [[ $ACP =~ ^[[:blank:]]*[+]?([0-9]*)(\.([0-9]*))? ]]; then
+  _acp_i=${BASH_REMATCH[1]}
+  _acp_f=${BASH_REMATCH[3]}
+  _acp_rest=${ACP:${#BASH_REMATCH[0]}}
+  if [ -n "$_acp_i$_acp_f" ] && [ ${#_acp_i} -le 3 ] && [[ $_acp_rest != [eE]* ]]; then
+    _acp_f="${_acp_f}000000"
+    _acp_f=${_acp_f:0:6}
+    _acp_x=$(( 10#0$_acp_i * 1000000 + 10#$_acp_f ))
+    if [ "$_acp_x" -gt 0 ] && [ "$_acp_x" -le 100000000 ]; then
+      _acp_eff=$(( CTX_FULL * _acp_x / 100000000 ))
+      if [ "$_acp_eff" -gt 0 ]; then
+        CTX_EFF=$_acp_eff
+        ACP_ON=1
+        while [[ $_acp_f == *0 ]]; do _acp_f=${_acp_f%0}; done
+        ACP_LABEL=$(( 10#0$_acp_i ))
+        [ -n "$_acp_f" ] && ACP_LABEL="${ACP_LABEL}.${_acp_f}"
+      fi
+    fi
+  fi
+fi
+
 CUR_TOKENS=$(( ${CUR_INPUT:-0} + ${CACHE_READ:-0} + ${CACHE_CREATE:-0} ))
 if [ -n "$CTX_EFF" ] && [ "$CTX_EFF" -gt 0 ] && [ "$CUR_TOKENS" -gt 0 ]; then
   PCT=$(( CUR_TOKENS * 100 / CTX_EFF ))
@@ -308,8 +352,16 @@ if [ -n "$CTX_EFF" ] && [ "$CTX_EFF" -gt 0 ] && [ "$CUR_TOKENS" -gt 0 ]; then
 fi
 
 # ── Context window size label ─────────────────────────────────
+# Budget first, since that is what the bar's % divides by; the full window
+# stays visible behind it — "500K (1M·50%)".
 CTX_LABEL=""
-[ -n "$CTX_EFF" ] && [ "$CTX_EFF" -gt 0 ] && CTX_LABEL="${DIM}$(fmt_window "$CTX_EFF")${RESET}"
+if [ -n "$CTX_EFF" ] && [ "$CTX_EFF" -gt 0 ]; then
+  if [ "$ACP_ON" -eq 1 ]; then
+    CTX_LABEL="${DIM}$(fmt_window "$CTX_EFF") ($(fmt_window "$CTX_FULL")·${ACP_LABEL}%)${RESET}"
+  else
+    CTX_LABEL="${DIM}$(fmt_window "$CTX_EFF")${RESET}"
+  fi
+fi
 
 # ── Git info ──────────────────────────────────────────────────
 BRANCH=""

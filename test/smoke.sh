@@ -12,6 +12,10 @@ ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 SCRIPT="$ROOT/cc-statusline.sh"
 SAMPLE="$SCRIPT_DIR/sample.json"
 
+# Inherited from the developer's own shell, this rewrites the window label and
+# would make every other assertion depend on their environment.
+unset CLAUDE_AUTOCOMPACT_PCT_OVERRIDE
+
 fail=0
 pass=0
 check() {
@@ -111,6 +115,38 @@ label() {  # $1 = revision to check out; echoes the (…) group from L1
 check "(git) detached at origin ref → ref name" '[ "$(label main~0)" = "(origin/main)" ]'
 check "(git) detached, no origin ref → literal" '[ "$(label decoy~0)" = "(detached)" ]'
 check "(git) on a branch → branch name"         '[ "$(label main)" = "(main)" ]'
+
+# ── Fourth pass: CLAUDE_AUTOCOMPACT_PCT_OVERRIDE ───────────────────────────
+# The bar divides by the override'd budget, so a wrong parse is invisible in the
+# label but silently wrong in the %; both are asserted.
+echo
+echo "Running auto-compact percentage override cases…"
+win() {  # $1 = env value, or UNSET; echoes L1's window label + L2's bar %
+  local out
+  if [ "$1" = UNSET ]; then out=$(bash "$SCRIPT" < "$SAMPLE" 2>/dev/null)
+  else out=$(CLAUDE_AUTOCOMPACT_PCT_OVERRIDE="$1" bash "$SCRIPT" < "$SAMPLE" 2>/dev/null)
+  fi
+  printf '%s' "$out" | sed -E 's/\x1b\[[0-9;]*[a-zA-Z]//g; s/\x1b\]8;;[^\x07]*\x07//g' \
+    | sed -nE '1s/.*\(M\) ([^|]*) \|.*/\1/p; 2s/.*[● ] ([0-9]+%).*/ \1/p' | tr -d '\n'
+}
+
+check "(pct) unset → plain window, 5%"     '[ "$(win UNSET)" = "1M 5%" ]'
+check "(pct) set-but-empty → plain window" '[ "$(win "")" = "1M 5%" ]'
+check "(pct) 50 → halved budget, 10%"      '[ "$(win 50)" = "500K (1M·50%) 10%" ]'
+check "(pct) decimals kept"                '[ "$(win 33.3)" = "333K (1M·33.3%) 15%" ]'
+check "(pct) label normalised"             '[ "$(win 33.30)" = "333K (1M·33.3%) 15%" ]'
+check "(pct) non-numeric ignored"          '[ "$(win abc)" = "1M 5%" ]'
+check "(pct) out of range ignored"         '[ "$(win 150)" = "1M 5%" ]'
+# Boundaries where a truncate-then-range-check gets it wrong; both scripts must
+# agree on every one of them.
+check "(pct) 100 → whole window"           '[ "$(win 100)" = "1M (1M·100%) 5%" ]'
+check "(pct) just over 100 ignored"        '[ "$(win 100.004)" = "1M 5%" ]'
+check "(pct) tiny fraction still applies"  '[ "$(win 0.001)" = "0K (1M·0.001%) 100%" ]'
+check "(pct) zero ignored"                 '[ "$(win 0)" = "1M 5%" ]'
+check "(pct) parseFloat prefix accepted"   '[ "$(win 50abc)" = "500K (1M·50%) 10%" ]'
+check "(pct) exponent notation rejected"   '[ "$(win 1e2)" = "1M 5%" ]'
+check "(pct) overlong digit run ignored"   '[ "$(win 99999999999999999999)" = "1M 5%" ]'
+check "(pct) applies to the ACW window"    '[ "$(export CLAUDE_CODE_AUTO_COMPACT_WINDOW=200000; win 50)" = "100K (200K·50%) 51%" ]'
 
 echo
 echo "Result: $pass passed, $fail failed."
