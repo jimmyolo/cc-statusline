@@ -12,10 +12,8 @@ ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 SCRIPT="$ROOT/cc-statusline.sh"
 SAMPLE="$SCRIPT_DIR/sample.json"
 
-# Inherited from the developer's own shell, these rewrite the window label and
-# would make every other assertion depend on their environment. Claude Code
-# exports both when the user sets them in settings.json, so a developer running
-# this suite from inside a session hits it without touching a shell at all.
+# Both rewrite the window label, and Claude Code exports them from settings.json
+# — a suite run inside a session inherits them without any shell doing it.
 unset CLAUDE_AUTOCOMPACT_PCT_OVERRIDE
 unset CLAUDE_CODE_AUTO_COMPACT_WINDOW
 
@@ -152,8 +150,7 @@ check "(pct) zero ignored"                 '[ "$(win 0)" = "987K 5%" ]'
 check "(pct) parseFloat prefix accepted"   '[ "$(win 50abc)" = "500K (1M·50%) 10%" ]'
 check "(pct) exponent notation rejected"   '[ "$(win 1e2)" = "987K 5%" ]'
 check "(pct) overlong digit run ignored"   '[ "$(win 99999999999999999999)" = "987K 5%" ]'
-# The reserve is a fixed token count, so which arm of the CLI's min() binds
-# depends on the window. Both arms are exercised here.
+# Which arm of the CLI's min() binds depends on the window; both are covered.
 check "(pct) 99 on 1M → reserve arm wins"  '[ "$(win 99)" = "987K (1M·99%) 5%" ]'
 check "(pct) 98 on 1M → pct arm wins"      '[ "$(win 98)" = "980K (1M·98%) 5%" ]'
 check "(pct) applies to the ACW window"    '[ "$(export CLAUDE_CODE_AUTO_COMPACT_WINDOW=200000; win 50)" = "100K (200K·50%) 51%" ]'
@@ -162,6 +159,10 @@ check "(pct) 95 on 200K → reserve arm"     '[ "$(export CLAUDE_CODE_AUTO_COMPA
 # A window at or below the reserve has nothing left to divide by; the full
 # window stands in rather than a zero or negative budget.
 check "(pct) window at the reserve"        '[ "$(export CLAUDE_CODE_AUTO_COMPACT_WINDOW=13000; win UNSET)" = "13K 100%" ]'
+# ...and an override on such a window still takes its own arm. The CLI's min()
+# would pick the reserve arm's zero and compact at once; a zero budget is not
+# divisible, so pinning the pct arm here pins the deliberate divergence.
+check "(pct) override on a reserve window" '[ "$(export CLAUDE_CODE_AUTO_COMPACT_WINDOW=13000; win 50)" = "6K (13K·50%) 100%" ]'
 
 echo
 echo "Result: $pass passed, $fail failed."

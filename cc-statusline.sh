@@ -302,22 +302,14 @@ if [ -n "$ACW" ] && [ "$ACW" -gt 0 ] 2>/dev/null; then
   { [ -z "$CTX_EFF" ] || [ "$ACW" -lt "$CTX_EFF" ]; } && CTX_EFF=$ACW
 fi
 
-# The compaction trigger, reproduced whole from the CLI (2.1.227, RIo()):
+# Compaction trigger, mirrored from the CLI (2.1.227, RIo()):
 #
-#   threshold = pct set ? min(floor(window * pct/100), window - 13000)
-#                       : window - 13000
+#   pct set    → min(floor(window * pct/100), window - RESERVE)
+#   pct unset  → window - RESERVE
 #
-# The 13000-token reserve applies with or without an override, so the bar
-# divides by it either way — a session with no override still compacts 13000
-# tokens short of the window. It is a fixed count, not a share: the same
-# constant reads as 98.7% of a 1M window and 93.5% of a 200K one, which is why
-# no percentage is hardcoded here.
+# RESERVE mirrors a CLI-internal constant; re-check RIo() when the bar stops
+# agreeing with when compaction fires.
 #
-# ponytail: RESERVE tracks a CLI-internal constant, so a CLI release can move it
-# out from under this script. Re-check RIo() when the context bar starts
-# disagreeing with when compaction actually fires.
-#
-# CLAUDE_AUTOCOMPACT_PCT_OVERRIDE, when set, only tightens it further.
 # The CLI parses with parseFloat, so the accepted form is a numeric prefix —
 # leading blanks, an optional '+', a leading '.', and a trailing non-numeric tail
 # are all tolerated. Exponent notation is the one parseFloat form rejected:
@@ -327,8 +319,6 @@ fi
 # and the ps1 accept exactly the same inputs.
 CTX_FULL=$CTX_EFF
 RESERVE=13000
-# A window at or below the reserve would leave nothing to divide by; keep the
-# full window there rather than render a zero or negative budget.
 if [ -n "$CTX_EFF" ] && [ "$CTX_EFF" -gt "$RESERVE" ]; then
   CTX_EFF=$(( CTX_FULL - RESERVE ))
 fi

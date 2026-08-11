@@ -148,6 +148,10 @@ try {
 $env:CLAUDE_CODE_AUTO_COMPACT_WINDOW = '13000'
 try {
     Test-Check "(pct) window at the reserve"     ((Get-WindowLabel 'UNSET') -eq '13K 100%')
+    # ...and an override on such a window still takes its own arm. The CLI's
+    # min() would pick the reserve arm's zero and compact at once; a zero budget
+    # is not divisible, so pinning the pct arm pins the deliberate divergence.
+    Test-Check "(pct) override on a reserve window" ((Get-WindowLabel '50') -eq "6K (13K${Dot}50%) 100%")
 } finally {
     Remove-Item Env:\CLAUDE_CODE_AUTO_COMPACT_WINDOW -ErrorAction SilentlyContinue
 }
