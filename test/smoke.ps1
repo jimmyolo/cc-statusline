@@ -15,9 +15,12 @@ $Sample = Join-Path $ScriptDir 'sample.json'
 $PwshExeName = if ($IsWindows) { 'pwsh.exe' } else { 'pwsh' }
 $PwshExe = Join-Path $PSHOME $PwshExeName
 
-# Inherited from the developer's own shell, this rewrites the window label and
-# would make every other assertion depend on their environment.
+# Inherited from the developer's own shell, these rewrite the window label and
+# would make every other assertion depend on their environment. Claude Code
+# exports both when the user sets them in settings.json, so a developer running
+# this suite from inside a session hits it without touching a shell at all.
 Remove-Item Env:\CLAUDE_AUTOCOMPACT_PCT_OVERRIDE -ErrorAction SilentlyContinue
+Remove-Item Env:\CLAUDE_CODE_AUTO_COMPACT_WINDOW -ErrorAction SilentlyContinue
 
 $Pass = 0
 $Fail = 0
@@ -110,26 +113,45 @@ function Get-WindowLabel {
 }
 
 $Dot = [char]0x00B7
-Test-Check "(pct) unset -> plain window, 5%"     ((Get-WindowLabel 'UNSET') -eq '1M 5%')
-Test-Check "(pct) set-but-empty -> plain window" ((Get-WindowLabel '') -eq '1M 5%')
+Test-Check "(pct) unset -> window less reserve"  ((Get-WindowLabel 'UNSET') -eq '987K 5%')
+Test-Check "(pct) set-but-empty -> same as unset" ((Get-WindowLabel '') -eq '987K 5%')
 Test-Check "(pct) 50 -> halved budget, 10%"      ((Get-WindowLabel '50') -eq "500K (1M${Dot}50%) 10%")
 Test-Check "(pct) decimals kept"                 ((Get-WindowLabel '33.3') -eq "333K (1M${Dot}33.3%) 15%")
 Test-Check "(pct) label normalised"              ((Get-WindowLabel '33.30') -eq "333K (1M${Dot}33.3%) 15%")
-Test-Check "(pct) non-numeric ignored"           ((Get-WindowLabel 'abc') -eq '1M 5%')
-Test-Check "(pct) out of range ignored"          ((Get-WindowLabel '150') -eq '1M 5%')
+Test-Check "(pct) non-numeric ignored"           ((Get-WindowLabel 'abc') -eq '987K 5%')
+Test-Check "(pct) out of range ignored"          ((Get-WindowLabel '150') -eq '987K 5%')
 # Boundaries where a truncate-then-range-check gets it wrong; both scripts must
 # agree on every one of them.
-Test-Check "(pct) 100 -> whole window"           ((Get-WindowLabel '100') -eq "1M (1M${Dot}100%) 5%")
-Test-Check "(pct) just over 100 ignored"         ((Get-WindowLabel '100.004') -eq '1M 5%')
+Test-Check "(pct) 100 -> reserve still binds"    ((Get-WindowLabel '100') -eq "987K (1M${Dot}100%) 5%")
+Test-Check "(pct) just over 100 ignored"         ((Get-WindowLabel '100.004') -eq '987K 5%')
 Test-Check "(pct) tiny fraction still applies"   ((Get-WindowLabel '0.001') -eq "0K (1M${Dot}0.001%) 100%")
-Test-Check "(pct) zero ignored"                  ((Get-WindowLabel '0') -eq '1M 5%')
+Test-Check "(pct) zero ignored"                  ((Get-WindowLabel '0') -eq '987K 5%')
 Test-Check "(pct) parseFloat prefix accepted"    ((Get-WindowLabel '50abc') -eq "500K (1M${Dot}50%) 10%")
-Test-Check "(pct) exponent notation rejected"    ((Get-WindowLabel '1e2') -eq '1M 5%')
-Test-Check "(pct) overlong digit run ignored"    ((Get-WindowLabel '99999999999999999999') -eq '1M 5%')
+Test-Check "(pct) exponent notation rejected"    ((Get-WindowLabel '1e2') -eq '987K 5%')
+Test-Check "(pct) overlong digit run ignored"    ((Get-WindowLabel '99999999999999999999') -eq '987K 5%')
+# The reserve is a fixed token count, so which arm of the CLI's min() binds
+# depends on the window. Both arms are exercised here.
+Test-Check "(pct) 99 on 1M -> reserve arm wins"  ((Get-WindowLabel '99') -eq "987K (1M${Dot}99%) 5%")
+Test-Check "(pct) 98 on 1M -> pct arm wins"      ((Get-WindowLabel '98') -eq "980K (1M${Dot}98%) 5%")
 
 $env:CLAUDE_CODE_AUTO_COMPACT_WINDOW = '200000'
 try {
     Test-Check "(pct) applies to the ACW window" ((Get-WindowLabel '50') -eq "100K (200K${Dot}50%) 51%")
+    Test-Check "(pct) reserve applies to ACW too" ((Get-WindowLabel 'UNSET') -eq '187K 27%')
+    Test-Check "(pct) 95 on 200K -> reserve arm" ((Get-WindowLabel '95') -eq "187K (200K${Dot}95%) 27%")
+} finally {
+    Remove-Item Env:\CLAUDE_CODE_AUTO_COMPACT_WINDOW -ErrorAction SilentlyContinue
+}
+
+# A window at or below the reserve has nothing left to divide by; the full
+# window stands in rather than a zero or negative budget.
+$env:CLAUDE_CODE_AUTO_COMPACT_WINDOW = '13000'
+try {
+    Test-Check "(pct) window at the reserve"     ((Get-WindowLabel 'UNSET') -eq '13K 100%')
+    # ...and an override on such a window still takes its own arm. The CLI's
+    # min() would pick the reserve arm's zero and compact at once; a zero budget
+    # is not divisible, so pinning the pct arm pins the deliberate divergence.
+    Test-Check "(pct) override on a reserve window" ((Get-WindowLabel '50') -eq "6K (13K${Dot}50%) 100%")
 } finally {
     Remove-Item Env:\CLAUDE_CODE_AUTO_COMPACT_WINDOW -ErrorAction SilentlyContinue
 }

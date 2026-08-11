@@ -302,16 +302,13 @@ if [ -n "$ACW" ] && [ "$ACW" -gt 0 ] 2>/dev/null; then
   { [ -z "$CTX_EFF" ] || [ "$ACW" -lt "$CTX_EFF" ]; } && CTX_EFF=$ACW
 fi
 
-# CLAUDE_AUTOCOMPACT_PCT_OVERRIDE moves the compaction trigger down to that share
-# of the window, so the budget the bar measures against shrinks with it:
+# Compaction trigger, mirrored from the CLI (2.1.227, RIo()):
 #
-#   CLI Rko():  threshold = min(floor(window * pct/100), window - 13000)
+#   pct set    → min(floor(window * pct/100), window - RESERVE)
+#   pct unset  → window - RESERVE
 #
-# The second arm is deliberately not reproduced — with no override this script
-# already treats the whole window as 100%, so applying it only here would make
-# the two paths disagree about the same session. Caveat: on a small window that
-# arm is the binding one (200K window, pct=95 → CLI compacts at 187000 while the
-# bar divides by 190000).
+# RESERVE mirrors a CLI-internal constant; re-check RIo() when the bar stops
+# agreeing with when compaction fires.
 #
 # The CLI parses with parseFloat, so the accepted form is a numeric prefix —
 # leading blanks, an optional '+', a leading '.', and a trailing non-numeric tail
@@ -321,6 +318,10 @@ fi
 # arithmetic integer, and the range check runs on the scaled value so this script
 # and the ps1 accept exactly the same inputs.
 CTX_FULL=$CTX_EFF
+RESERVE=13000
+if [ -n "$CTX_EFF" ] && [ "$CTX_EFF" -gt "$RESERVE" ]; then
+  CTX_EFF=$(( CTX_FULL - RESERVE ))
+fi
 ACP=${CLAUDE_AUTOCOMPACT_PCT_OVERRIDE:-}
 ACP_ON=0
 ACP_LABEL=""
@@ -335,6 +336,7 @@ if [ -n "$CTX_EFF" ] && [[ $ACP =~ ^[[:blank:]]*[+]?([0-9]*)(\.([0-9]*))? ]]; th
     if [ "$_acp_x" -gt 0 ] && [ "$_acp_x" -le 100000000 ]; then
       _acp_eff=$(( CTX_FULL * _acp_x / 100000000 ))
       if [ "$_acp_eff" -gt 0 ]; then
+        [ "$_acp_eff" -gt "$CTX_EFF" ] && _acp_eff=$CTX_EFF
         CTX_EFF=$_acp_eff
         ACP_ON=1
         while [[ $_acp_f == *0 ]]; do _acp_f=${_acp_f%0}; done

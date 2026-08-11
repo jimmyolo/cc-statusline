@@ -333,16 +333,13 @@ if ($Acw -match '^\d+$' -and [int64]$Acw -gt 0) {
 }
 
 <#
-  CLAUDE_AUTOCOMPACT_PCT_OVERRIDE moves the compaction trigger down to that
-  share of the window, so the budget the bar measures against shrinks with it:
+  Compaction trigger, mirrored from the CLI (2.1.227, RIo()):
 
-    CLI Rko():  threshold = min(floor(window * pct/100), window - 13000)
+    pct set    -> min(floor(window * pct/100), window - Reserve)
+    pct unset  -> window - Reserve
 
-  The second arm is deliberately not reproduced -- with no override this script
-  already treats the whole window as 100%, so applying it only here would make
-  the two paths disagree about the same session. Caveat: on a small window that
-  arm is the binding one (200K window, pct=95 -> CLI compacts at 187000 while
-  the bar divides by 190000).
+  Reserve mirrors a CLI-internal constant; re-check RIo() when the bar stops
+  agreeing with when compaction fires.
 
   The CLI parses with parseFloat, so the accepted form is a numeric prefix --
   leading blanks, an optional '+', a leading '.', and a trailing non-numeric
@@ -354,6 +351,10 @@ if ($Acw -match '^\d+$' -and [int64]$Acw -gt 0) {
   same inputs.
 #>
 $CtxFull = $CtxEff
+$Reserve = 13000
+if ($null -ne $CtxEff -and $CtxEff -gt $Reserve) {
+    $CtxEff = [int64]$CtxFull - $Reserve
+}
 $Acp = $env:CLAUDE_AUTOCOMPACT_PCT_OVERRIDE
 $AcpOn = $false
 $AcpLabel = ''
@@ -367,6 +368,7 @@ if ($null -ne $CtxEff -and $Acp -match '^[ \t]*\+?([0-9]*)(\.([0-9]*))?') {
         if ($AcpX -gt 0 -and $AcpX -le 100000000) {
             $AcpEff = [int64][math]::Floor(($CtxFull * $AcpX) / 100000000)
             if ($AcpEff -gt 0) {
+                if ($AcpEff -gt $CtxEff) { $AcpEff = $CtxEff }
                 $CtxEff = $AcpEff
                 $AcpOn = $true
                 $AcpLabel = [string][int64]"0$AcpInt"
