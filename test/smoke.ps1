@@ -21,6 +21,7 @@ $PwshExe = Join-Path $PSHOME $PwshExeName
 # this suite from inside a session hits it without touching a shell at all.
 Remove-Item Env:\CLAUDE_AUTOCOMPACT_PCT_OVERRIDE -ErrorAction SilentlyContinue
 Remove-Item Env:\CLAUDE_CODE_AUTO_COMPACT_WINDOW -ErrorAction SilentlyContinue
+Remove-Item Env:\CC_STATUSLINE_FORGE -ErrorAction SilentlyContinue
 
 $Pass = 0
 $Fail = 0
@@ -154,6 +155,67 @@ try {
     Test-Check "(pct) override on a reserve window" ((Get-WindowLabel '50') -eq "6K (13K${Dot}50%) 100%")
 } finally {
     Remove-Item Env:\CLAUDE_CODE_AUTO_COMPACT_WINDOW -ErrorAction SilentlyContinue
+}
+
+# -- L1 hyperlink targets, in a throwaway repo -----------------------------
+# The URLs live inside OSC 8 sequences, which every other assertion strips, so
+# these read the raw output. Mirrors the (link) pass in smoke.sh.
+Write-Output ""
+Write-Output "Running hyperlink-target cases..."
+$RepoTmp = Join-Path ([System.IO.Path]::GetTempPath()) ("cc-statusline-smoke-" + [System.Guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $RepoTmp | Out-Null
+try {
+    Push-Location $RepoTmp
+    git init -q -b main . 2>&1 | Out-Null
+    git config user.email t@t; git config user.name t
+    git commit -q --allow-empty -m one 2>&1 | Out-Null
+    git remote add origin placeholder 2>&1 | Out-Null
+    Pop-Location
+
+    function Get-BranchLink {   # $Remote, $BranchName -> the last OSC 8 target
+        param([string]$Remote, [string]$BranchName)
+        Push-Location $RepoTmp
+        git remote set-url origin $Remote 2>&1 | Out-Null
+        git checkout -q -B $BranchName main 2>&1 | Out-Null
+        $raw = Get-Content -Raw $Sample | & $PwshExe -NoProfile -File $Script
+        Pop-Location
+        $line = ($raw -join "`n") -split "`n" | Select-Object -First 1
+        $m = [regex]::Matches($line, "`e\]8;;([^`a]*)`a")
+        if ($m.Count -eq 0) { return '' }
+        return $m[$m.Count - 1].Groups[1].Value
+    }
+
+    Test-Check "(link) scp remote -> https PR search" `
+      ((Get-BranchLink 'git@github.com:o/r.git' 'b') -eq 'https://github.com/o/r/pulls?q=is%3Apr+head%3Ab')
+    # An SSH remote is unbrowsable as given; the user and the SSH port are dropped.
+    Test-Check "(link) ssh:// remote loses user+port" `
+      ((Get-BranchLink 'ssh://git@gitlab.example.com:2222/g/p.git' 'b') -eq 'https://gitlab.example.com/g/p/-/merge_requests?scope=all&state=all&source_branch=b')
+    # ...but a port on an https remote is the web UI's own and must survive.
+    Test-Check "(link) https port survives" `
+      ((Get-BranchLink 'https://10.0.0.1:30001/g/p.git' 'b') -eq 'https://10.0.0.1:30001/g/p/pulls?q=is%3Apr+head%3Ab')
+    Test-Check "(link) non-git ssh user rewritten" `
+      ((Get-BranchLink 'deploy@git.example.com:g/p.git' 'b') -eq 'https://git.example.com/g/p/pulls?q=is%3Apr+head%3Ab')
+    # The forge guess reads the host only: this repo lives on GitHub.
+    Test-Check "(link) gitlab in path is not gitlab" `
+      ((Get-BranchLink 'https://github.com/gitlab-org/gitlab.git' 'b') -eq 'https://github.com/gitlab-org/gitlab/pulls?q=is%3Apr+head%3Ab')
+    Test-Check "(link) mixed-case gitlab host matches" `
+      ((Get-BranchLink 'git@GitLab.example.com:g/p.git' 'b') -eq 'https://GitLab.example.com/g/p/-/merge_requests?scope=all&state=all&source_branch=b')
+    # Unencoded, the & would append a parameter and the # would truncate the URL.
+    Test-Check "(link) branch & and = encoded" `
+      ((Get-BranchLink 'https://github.com/o/r.git' 'x&y=z') -eq 'https://github.com/o/r/pulls?q=is%3Apr+head%3Ax%26y%3Dz')
+    Test-Check "(link) branch # encoded" `
+      ((Get-BranchLink 'https://github.com/o/r.git' 'x#y') -eq 'https://github.com/o/r/pulls?q=is%3Apr+head%3Ax%23y')
+
+    # A self-hosted instance whose host names no forge is unreachable by any guess.
+    $env:CC_STATUSLINE_FORGE = 'gitlab'
+    try {
+        Test-Check "(link) FORGE override wins" `
+          ((Get-BranchLink 'https://10.0.0.1:30001/g/p.git' 'b') -eq 'https://10.0.0.1:30001/g/p/-/merge_requests?scope=all&state=all&source_branch=b')
+    } finally {
+        Remove-Item Env:\CC_STATUSLINE_FORGE -ErrorAction SilentlyContinue
+    }
+} finally {
+    Remove-Item -Recurse -Force $RepoTmp -ErrorAction SilentlyContinue
 }
 
 Write-Output ""

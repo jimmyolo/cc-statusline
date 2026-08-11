@@ -378,6 +378,8 @@ GIT_COMMIT=""
 )
 [ -n "$_gitdir" ] && IS_GIT=1
 [ "$IS_GIT" -eq 1 ] && BRANCH="$(git branch --show-current 2>/dev/null)"
+ON_BRANCH=0
+[ -n "$BRANCH" ] && ON_BRANCH=1
 # Detached HEAD (checkout of a sha, rebase, bisect) prints nothing. Without a
 # placeholder the whole (branch* M A D +N -N) block on L1 is suppressed, taking
 # the working-tree stats with it. The @<hash> rendered right after names the commit.
@@ -400,11 +402,70 @@ fi
 
 REPO_LINK="${DIR##*/}"
 REMOTE=$(git remote get-url origin 2>/dev/null)
-REMOTE=${REMOTE/git@github.com:/https:\/\/github.com\/}
+# An SSH remote is not browsable, so it is rewritten to the web URL of the
+# same repository. The SSH user and the ssh:// port are transport details and
+# are dropped; a port on an https remote is kept, since a self-hosted forge
+# often serves its UI there.
+#
+#   ssh://git@host:2222/grp/repo.git → https://host/grp/repo
+#   deploy@host:grp/repo.git         → https://host/grp/repo
+#   https://host:30001/grp/repo.git  → https://host:30001/grp/repo
+case $REMOTE in
+  ssh://*) REMOTE=${REMOTE#ssh://}; REMOTE=${REMOTE#*@}
+           _r_host=${REMOTE%%/*}
+           REMOTE="https://${_r_host%%:*}/${REMOTE#*/}" ;;
+  *://*)   ;;
+  *@*:*)   REMOTE=${REMOTE#*@}; REMOTE="https://${REMOTE/:/\/}" ;;
+esac
 REMOTE=${REMOTE%.git}
+BRANCH_LINK="$BRANCH"
 if [ -n "$REMOTE" ]; then
   REPO_NAME=${REMOTE##*/}
   REPO_LINK=$(printf '%b' "\e]8;;${REMOTE}\a${REPO_NAME}\e]8;;\a")
+  # Branch name links to its own merge requests, filtered by source branch —
+  # the number is not knowable without an API call, and this path may not spawn.
+  # Only a checked-out local branch gets one: the detached-HEAD fallback above
+  # yields a remote ref or the literal `detached`, neither of which filters.
+  if [ "$ON_BRANCH" -eq 1 ]; then
+    # Forge shape is guessed from the host alone — matching the path too would
+    # read github.com/gitlab-org/gitlab as GitLab. A self-hosted instance often
+    # names no forge at all (an IP, a bare hostname), which no guess can reach:
+    # CC_STATUSLINE_FORGE=gitlab|github settles those. Lowercased to match the
+    # ps1, whose -like is case-insensitive and cannot be made otherwise without
+    # -clike.
+    _forge=$CC_STATUSLINE_FORGE
+    if [ -z "$_forge" ]; then
+      _r_host=${REMOTE#https://}
+      _r_host=${_r_host%%/*}
+      case ${_r_host,,} in
+        *gitlab*) _forge=gitlab ;;
+        *)        _forge=github ;;
+      esac
+    fi
+    # Every byte git allows in a ref that also means something in a query
+    # string. Unencoded, `&` appends a parameter and `#` truncates the URL.
+    _b_enc=""
+    for ((_i = 0; _i < ${#BRANCH}; _i++)); do
+      _c=${BRANCH:_i:1}
+      case $_c in
+        '%') _b_enc="${_b_enc}%25" ;;
+        '&') _b_enc="${_b_enc}%26" ;;
+        '#') _b_enc="${_b_enc}%23" ;;
+        '+') _b_enc="${_b_enc}%2B" ;;
+        ';') _b_enc="${_b_enc}%3B" ;;
+        '=') _b_enc="${_b_enc}%3D" ;;
+        '?') _b_enc="${_b_enc}%3F" ;;
+        ' ') _b_enc="${_b_enc}%20" ;;
+        *)   _b_enc="${_b_enc}${_c}" ;;
+      esac
+    done
+    if [ "$_forge" = gitlab ]; then
+      _mr_url="${REMOTE}/-/merge_requests?scope=all&state=all&source_branch=${_b_enc}"
+    else
+      _mr_url="${REMOTE}/pulls?q=is%3Apr+head%3A${_b_enc}"
+    fi
+    BRANCH_LINK=$(printf '%b' "\e]8;;${_mr_url}\a${BRANCH}\e]8;;\a")
+  fi
 fi
 
 # PWD subpath: show cwd relative to project root when inside a subdirectory.
@@ -522,7 +583,7 @@ L1="${L1}${SEP}${WHITE}${REPO_LINK}${RESET}"
 
 # ── Consolidated git block (AJ-25): (branch* M A D +N -N) — suppress zero categories ──
 if [ -n "$BRANCH" ]; then
-  BRANCH_PARTS="${BRANCH}"
+  BRANCH_PARTS="${BRANCH_LINK}"
   # Dirty marker: any of M/A/D > 0
   if { [ "$GIT_M" -gt 0 ] 2>/dev/null; } || { [ "$GIT_A" -gt 0 ] 2>/dev/null; } || { [ "$GIT_D" -gt 0 ] 2>/dev/null; }; then
     BRANCH_PARTS="${BRANCH_PARTS}*"

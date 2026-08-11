@@ -402,10 +402,12 @@ if ($null -ne $CtxEff -and $CtxEff -gt 0) {
 
 # ── Git info ──────────────────────────────────────────────────
 $Branch = ''
+$OnBranch = $false
 & git rev-parse --git-dir 2>$null 1>$null
 $IsGit = ($LASTEXITCODE -eq 0)
 if ($IsGit) {
     $Branch = (& git branch --show-current 2>$null)
+    $OnBranch = [bool]$Branch
     # Detached HEAD (checkout of a sha, rebase, bisect) prints nothing. Without a
     # placeholder the whole (branch* M A D +N -N) block on L1 is suppressed, taking
     # the working-tree stats with it. The @<hash> after it names the commit.
@@ -428,11 +430,52 @@ if ($IsGit) {
 }
 
 $RepoLink = Split-Path -Leaf $Dir
+$BranchLink = $Branch
 $Remote = (& git remote get-url origin 2>$null)
 if ($Remote) {
-    $Remote = ($Remote -replace '^git@github\.com:', 'https://github.com/') -replace '\.git$', ''
+    # An SSH remote is not browsable, so it is rewritten to the web URL of the
+    # same repository. The SSH user and the ssh:// port are transport details
+    # and are dropped; a port on an https remote is kept, since a self-hosted
+    # forge often serves its UI there.
+    #
+    #   ssh://git@host:2222/grp/repo.git -> https://host/grp/repo
+    #   deploy@host:grp/repo.git         -> https://host/grp/repo
+    #   https://host:30001/grp/repo.git  -> https://host:30001/grp/repo
+    if ($Remote -like 'ssh://*') {
+        $Remote = $Remote -replace '^ssh://(?:[^@/]+@)?([^:/]+)(?::\d+)?/', 'https://$1/'
+    } elseif ($Remote -notlike '*://*') {
+        $Remote = $Remote -replace '^(?:[^@/]+@)?([^:/]+):', 'https://$1/'
+    }
+    $Remote = $Remote -replace '\.git$', ''
     $RepoName = Split-Path -Leaf $Remote
     $RepoLink = "$Esc]8;;$Remote$Bel$RepoName$Esc]8;;$Bel"
+    # Branch name links to its own merge requests, filtered by source branch —
+    # the number is not knowable without an API call. Only a checked-out local
+    # branch gets one: the detached-HEAD fallback above yields a remote ref or
+    # the literal 'detached', neither of which filters.
+    if ($OnBranch) {
+        # Forge shape is guessed from the host alone — matching the path too
+        # would read github.com/gitlab-org/gitlab as GitLab. A self-hosted
+        # instance often names no forge at all (an IP, a bare hostname), which
+        # no guess can reach: CC_STATUSLINE_FORGE=gitlab|github settles those.
+        $Forge = $env:CC_STATUSLINE_FORGE
+        if (-not $Forge) {
+            $RHost = ($Remote -replace '^https://', '') -replace '/.*$', ''
+            if ($RHost -like '*gitlab*') { $Forge = 'gitlab' } else { $Forge = 'github' }
+        }
+        # Every byte git allows in a ref that also means something in a query
+        # string. Unencoded, '&' appends a parameter and '#' truncates the URL.
+        # '%' goes first, or it would re-encode the escapes added after it.
+        $BEnc = $Branch -replace '%', '%25' -replace '&', '%26' -replace '#', '%23' `
+                        -replace '\+', '%2B' -replace ';', '%3B' -replace '=', '%3D' `
+                        -replace '\?', '%3F' -replace ' ', '%20'
+        if ($Forge -eq 'gitlab') {
+            $MrUrl = "$Remote/-/merge_requests?scope=all&state=all&source_branch=$BEnc"
+        } else {
+            $MrUrl = "$Remote/pulls?q=is%3Apr+head%3A$BEnc"
+        }
+        $BranchLink = "$Esc]8;;$MrUrl$Bel$Branch$Esc]8;;$Bel"
+    }
 }
 
 # Pwd subpath: show cwd relative to project root when inside a subdirectory.
@@ -528,7 +571,7 @@ if ($PwdSubpath) { $L1 += "${Dim}/${PwdSubpath}${Reset}" }
 
 # Consolidated git block: (branch* M A D +N -N) — suppress zero categories
 if ($Branch) {
-    $BranchParts = $Branch
+    $BranchParts = $BranchLink
     if ($GitM -gt 0 -or $GitA -gt 0 -or $GitD -gt 0) { $BranchParts += '*' }
     if ($GitM -gt 0) { $BranchParts += " ${Yellow}${GitM}M${Reset}${Dim}" }
     if ($GitA -gt 0) { $BranchParts += " ${Green}${GitA}A${Reset}${Dim}" }
