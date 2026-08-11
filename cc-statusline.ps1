@@ -433,10 +433,20 @@ $RepoLink = Split-Path -Leaf $Dir
 $BranchLink = $Branch
 $Remote = (& git remote get-url origin 2>$null)
 if ($Remote) {
-    # scp-style remotes carry no scheme, and the host is not always github.com —
-    # a self-hosted GitLab reaches here too. 'ssh://' forms already have a scheme
-    # and are left alone.
-    $Remote = ($Remote -replace '^git@([^:]+):', 'https://$1/') -replace '\.git$', ''
+    # An SSH remote is not browsable, so it is rewritten to the web URL of the
+    # same repository. The SSH user and the ssh:// port are transport details
+    # and are dropped; a port on an https remote is kept, since a self-hosted
+    # forge often serves its UI there.
+    #
+    #   ssh://git@host:2222/grp/repo.git -> https://host/grp/repo
+    #   deploy@host:grp/repo.git         -> https://host/grp/repo
+    #   https://host:30001/grp/repo.git  -> https://host:30001/grp/repo
+    if ($Remote -like 'ssh://*') {
+        $Remote = $Remote -replace '^ssh://(?:[^@/]+@)?([^:/]+)(?::\d+)?/', 'https://$1/'
+    } elseif ($Remote -notlike '*://*') {
+        $Remote = $Remote -replace '^(?:[^@/]+@)?([^:/]+):', 'https://$1/'
+    }
+    $Remote = $Remote -replace '\.git$', ''
     $RepoName = Split-Path -Leaf $Remote
     $RepoLink = "$Esc]8;;$Remote$Bel$RepoName$Esc]8;;$Bel"
     # Branch name links to its own merge requests, filtered by source branch —
@@ -444,10 +454,25 @@ if ($Remote) {
     # branch gets one: the detached-HEAD fallback above yields a remote ref or
     # the literal 'detached', neither of which filters.
     if ($OnBranch) {
-        if ($Remote -like '*gitlab*') {
-            $MrUrl = "$Remote/-/merge_requests?scope=all&state=all&source_branch=$Branch"
+        # Forge shape is guessed from the host alone — matching the path too
+        # would read github.com/gitlab-org/gitlab as GitLab. A self-hosted
+        # instance often names no forge at all (an IP, a bare hostname), which
+        # no guess can reach: CC_STATUSLINE_FORGE=gitlab|github settles those.
+        $Forge = $env:CC_STATUSLINE_FORGE
+        if (-not $Forge) {
+            $RHost = ($Remote -replace '^https://', '') -replace '/.*$', ''
+            if ($RHost -like '*gitlab*') { $Forge = 'gitlab' } else { $Forge = 'github' }
+        }
+        # Every byte git allows in a ref that also means something in a query
+        # string. Unencoded, '&' appends a parameter and '#' truncates the URL.
+        # '%' goes first, or it would re-encode the escapes added after it.
+        $BEnc = $Branch -replace '%', '%25' -replace '&', '%26' -replace '#', '%23' `
+                        -replace '\+', '%2B' -replace ';', '%3B' -replace '=', '%3D' `
+                        -replace '\?', '%3F' -replace ' ', '%20'
+        if ($Forge -eq 'gitlab') {
+            $MrUrl = "$Remote/-/merge_requests?scope=all&state=all&source_branch=$BEnc"
         } else {
-            $MrUrl = "$Remote/pulls?q=is%3Apr+head%3A$Branch"
+            $MrUrl = "$Remote/pulls?q=is%3Apr+head%3A$BEnc"
         }
         $BranchLink = "$Esc]8;;$MrUrl$Bel$Branch$Esc]8;;$Bel"
     }

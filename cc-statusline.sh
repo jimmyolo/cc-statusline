@@ -402,11 +402,20 @@ fi
 
 REPO_LINK="${DIR##*/}"
 REMOTE=$(git remote get-url origin 2>/dev/null)
-# scp-style remotes carry no scheme, and the host is not always github.com —
-# a self-hosted GitLab reaches here too. `ssh://` forms already have a scheme
-# and are left alone.
+# An SSH remote is not browsable, so it is rewritten to the web URL of the
+# same repository. The SSH user and the ssh:// port are transport details and
+# are dropped; a port on an https remote is kept, since a self-hosted forge
+# often serves its UI there.
+#
+#   ssh://git@host:2222/grp/repo.git → https://host/grp/repo
+#   deploy@host:grp/repo.git         → https://host/grp/repo
+#   https://host:30001/grp/repo.git  → https://host:30001/grp/repo
 case $REMOTE in
-  git@*) REMOTE=${REMOTE#git@}; REMOTE="https://${REMOTE/:/\/}" ;;
+  ssh://*) REMOTE=${REMOTE#ssh://}; REMOTE=${REMOTE#*@}
+           _r_host=${REMOTE%%/*}
+           REMOTE="https://${_r_host%%:*}/${REMOTE#*/}" ;;
+  *://*)   ;;
+  *@*:*)   REMOTE=${REMOTE#*@}; REMOTE="https://${REMOTE/:/\/}" ;;
 esac
 REMOTE=${REMOTE%.git}
 BRANCH_LINK="$BRANCH"
@@ -418,10 +427,43 @@ if [ -n "$REMOTE" ]; then
   # Only a checked-out local branch gets one: the detached-HEAD fallback above
   # yields a remote ref or the literal `detached`, neither of which filters.
   if [ "$ON_BRANCH" -eq 1 ]; then
-    case $REMOTE in
-      *gitlab*) _mr_url="${REMOTE}/-/merge_requests?scope=all&state=all&source_branch=${BRANCH}" ;;
-      *)        _mr_url="${REMOTE}/pulls?q=is%3Apr+head%3A${BRANCH}" ;;
-    esac
+    # Forge shape is guessed from the host alone — matching the path too would
+    # read github.com/gitlab-org/gitlab as GitLab. A self-hosted instance often
+    # names no forge at all (an IP, a bare hostname), which no guess can reach:
+    # CC_STATUSLINE_FORGE=gitlab|github settles those. Lowercased to match the
+    # ps1, whose -like is case-insensitive and cannot be made otherwise without
+    # -clike.
+    _forge=$CC_STATUSLINE_FORGE
+    if [ -z "$_forge" ]; then
+      _r_host=${REMOTE#https://}
+      _r_host=${_r_host%%/*}
+      case ${_r_host,,} in
+        *gitlab*) _forge=gitlab ;;
+        *)        _forge=github ;;
+      esac
+    fi
+    # Every byte git allows in a ref that also means something in a query
+    # string. Unencoded, `&` appends a parameter and `#` truncates the URL.
+    _b_enc=""
+    for ((_i = 0; _i < ${#BRANCH}; _i++)); do
+      _c=${BRANCH:_i:1}
+      case $_c in
+        '%') _b_enc="${_b_enc}%25" ;;
+        '&') _b_enc="${_b_enc}%26" ;;
+        '#') _b_enc="${_b_enc}%23" ;;
+        '+') _b_enc="${_b_enc}%2B" ;;
+        ';') _b_enc="${_b_enc}%3B" ;;
+        '=') _b_enc="${_b_enc}%3D" ;;
+        '?') _b_enc="${_b_enc}%3F" ;;
+        ' ') _b_enc="${_b_enc}%20" ;;
+        *)   _b_enc="${_b_enc}${_c}" ;;
+      esac
+    done
+    if [ "$_forge" = gitlab ]; then
+      _mr_url="${REMOTE}/-/merge_requests?scope=all&state=all&source_branch=${_b_enc}"
+    else
+      _mr_url="${REMOTE}/pulls?q=is%3Apr+head%3A${_b_enc}"
+    fi
     BRANCH_LINK=$(printf '%b' "\e]8;;${_mr_url}\a${BRANCH}\e]8;;\a")
   fi
 fi

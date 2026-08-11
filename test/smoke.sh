@@ -16,6 +16,7 @@ SAMPLE="$SCRIPT_DIR/sample.json"
 # — a suite run inside a session inherits them without any shell doing it.
 unset CLAUDE_AUTOCOMPACT_PCT_OVERRIDE
 unset CLAUDE_CODE_AUTO_COMPACT_WINDOW
+unset CC_STATUSLINE_FORGE
 
 fail=0
 pass=0
@@ -163,6 +164,48 @@ check "(pct) window at the reserve"        '[ "$(export CLAUDE_CODE_AUTO_COMPACT
 # would pick the reserve arm's zero and compact at once; a zero budget is not
 # divisible, so pinning the pct arm here pins the deliberate divergence.
 check "(pct) override on a reserve window" '[ "$(export CLAUDE_CODE_AUTO_COMPACT_WINDOW=13000; win 50)" = "6K (13K·50%) 100%" ]'
+
+# ── Fifth pass: L1 hyperlink targets, in a throwaway repo ──────────────────
+# The URLs live inside OSC 8 sequences, which every other pass strips, so these
+# read the raw output. Same scratch repo as the branch-label pass, re-pointed.
+echo
+echo "Running hyperlink-target cases…"
+link() {  # $1 = remote URL, $2 = branch; echoes the branch link (last OSC 8)
+  git -C "$REPO_TMP" remote remove origin 2>/dev/null
+  git -C "$REPO_TMP" remote add origin "$1"
+  git -C "$REPO_TMP" checkout -q -B "$2" main
+  ( cd "$REPO_TMP" && bash "$SCRIPT" < "$SAMPLE" 2>/dev/null ) \
+    | head -1 | grep -oP '\x1b\]8;;\K[^\x07]+' | tail -1
+}
+
+check "(link) scp remote → https PR search" \
+  '[ "$(link git@github.com:o/r.git b)" = "https://github.com/o/r/pulls?q=is%3Apr+head%3Ab" ]'
+# An SSH remote is unbrowsable as given; the user and the SSH port are dropped.
+check "(link) ssh:// remote loses user+port" \
+  '[ "$(link ssh://git@gitlab.example.com:2222/g/p.git b)" = "https://gitlab.example.com/g/p/-/merge_requests?scope=all&state=all&source_branch=b" ]'
+# ...but a port on an https remote is the web UI's own and must survive.
+check "(link) https port survives" \
+  '[ "$(link https://10.0.0.1:30001/g/p.git b)" = "https://10.0.0.1:30001/g/p/pulls?q=is%3Apr+head%3Ab" ]'
+check "(link) non-git ssh user rewritten" \
+  '[ "$(link deploy@git.example.com:g/p.git b)" = "https://git.example.com/g/p/pulls?q=is%3Apr+head%3Ab" ]'
+# The forge guess reads the host only: this repo lives on GitHub.
+check "(link) gitlab in path is not gitlab" \
+  '[ "$(link https://github.com/gitlab-org/gitlab.git b)" = "https://github.com/gitlab-org/gitlab/pulls?q=is%3Apr+head%3Ab" ]'
+# Case-insensitive on purpose — the ps1 mirror's -like cannot be made otherwise.
+check "(link) mixed-case gitlab host matches" \
+  '[ "$(link git@GitLab.example.com:g/p.git b)" = "https://GitLab.example.com/g/p/-/merge_requests?scope=all&state=all&source_branch=b" ]'
+# A self-hosted instance whose host names no forge is unreachable by any guess.
+check "(link) FORGE override wins" \
+  '[ "$(export CC_STATUSLINE_FORGE=gitlab; link https://10.0.0.1:30001/g/p.git b)" = "https://10.0.0.1:30001/g/p/-/merge_requests?scope=all&state=all&source_branch=b" ]'
+# Unencoded, the & would append a parameter and the # would truncate the URL.
+check "(link) branch & and = encoded" \
+  '[ "$(link https://github.com/o/r.git "x&y=z")" = "https://github.com/o/r/pulls?q=is%3Apr+head%3Ax%26y%3Dz" ]'
+check "(link) branch # encoded" \
+  '[ "$(link https://github.com/o/r.git "x#y")" = "https://github.com/o/r/pulls?q=is%3Apr+head%3Ax%23y" ]'
+# Detached HEAD shows a remote ref or the literal `detached`; neither filters,
+# so only the repo link is left and it is the last OSC 8 on the line.
+check "(link) detached HEAD → repo link only" \
+  '[ "$(link https://github.com/o/r.git b >/dev/null; git -C "$REPO_TMP" checkout -q --detach HEAD; cd "$REPO_TMP" && bash "$SCRIPT" < "$SAMPLE" 2>/dev/null | head -1 | grep -oP '"'"'\x1b\]8;;\K[^\x07]+'"'"' | tail -1)" = "https://github.com/o/r" ]'
 
 echo
 echo "Result: $pass passed, $fail failed."

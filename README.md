@@ -119,7 +119,15 @@ Two OSC 8 links on L1, both derived from `origin` — no API call, no extra proc
 | repo name | the repository page |
 | branch name | that branch's pull/merge requests, filtered by source branch |
 
-A host containing `gitlab` gets GitLab's URL shapes (`/-/merge_requests?source_branch=…`), everything else GitHub's (`/pulls?q=head:…`). The branch link is omitted on a detached HEAD, where the displayed name is a remote ref or the literal `detached` and would filter nothing.
+An SSH remote is not browsable, so both links are built from the web URL of the same repository — the SSH user and the `ssh://` port are dropped, while a port on an `https` remote is kept, since a self-hosted forge often serves its UI there.
+
+The URL shapes follow the forge, guessed from the **host** alone (matching the path too would read `github.com/gitlab-org/gitlab` as GitLab): a host containing `gitlab`, in any case, gets `/-/merge_requests?source_branch=…`; everything else gets `/pulls?q=head:…`. A self-hosted instance whose host names no forge — an IP, a bare hostname — is beyond any guess:
+
+```sh
+export CC_STATUSLINE_FORGE=gitlab   # or github; overrides the host guess
+```
+
+The branch link is omitted on a detached HEAD, where the displayed name is a remote ref or the literal `detached` and would filter nothing.
 
 ### Context bar denominator
 
