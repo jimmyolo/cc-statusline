@@ -12,9 +12,12 @@ ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 SCRIPT="$ROOT/cc-statusline.sh"
 SAMPLE="$SCRIPT_DIR/sample.json"
 
-# Inherited from the developer's own shell, this rewrites the window label and
-# would make every other assertion depend on their environment.
+# Inherited from the developer's own shell, these rewrite the window label and
+# would make every other assertion depend on their environment. Claude Code
+# exports both when the user sets them in settings.json, so a developer running
+# this suite from inside a session hits it without touching a shell at all.
 unset CLAUDE_AUTOCOMPACT_PCT_OVERRIDE
+unset CLAUDE_CODE_AUTO_COMPACT_WINDOW
 
 fail=0
 pass=0
@@ -133,23 +136,32 @@ win() {  # $1 = env value, or UNSET; echoes L1's window label + L2's bar %
     | sed -nE '1s/.*\(M\) ([^|]*) \|.*/\1/p; 2s/.*[● ] ([0-9]+%).*/ \1/p' | tr -d '\n'
 }
 
-check "(pct) unset → plain window, 5%"     '[ "$(win UNSET)" = "1M 5%" ]'
-check "(pct) set-but-empty → plain window" '[ "$(win "")" = "1M 5%" ]'
+check "(pct) unset → window less reserve"  '[ "$(win UNSET)" = "987K 5%" ]'
+check "(pct) set-but-empty → same as unset" '[ "$(win "")" = "987K 5%" ]'
 check "(pct) 50 → halved budget, 10%"      '[ "$(win 50)" = "500K (1M·50%) 10%" ]'
 check "(pct) decimals kept"                '[ "$(win 33.3)" = "333K (1M·33.3%) 15%" ]'
 check "(pct) label normalised"             '[ "$(win 33.30)" = "333K (1M·33.3%) 15%" ]'
-check "(pct) non-numeric ignored"          '[ "$(win abc)" = "1M 5%" ]'
-check "(pct) out of range ignored"         '[ "$(win 150)" = "1M 5%" ]'
+check "(pct) non-numeric ignored"          '[ "$(win abc)" = "987K 5%" ]'
+check "(pct) out of range ignored"         '[ "$(win 150)" = "987K 5%" ]'
 # Boundaries where a truncate-then-range-check gets it wrong; both scripts must
 # agree on every one of them.
-check "(pct) 100 → whole window"           '[ "$(win 100)" = "1M (1M·100%) 5%" ]'
-check "(pct) just over 100 ignored"        '[ "$(win 100.004)" = "1M 5%" ]'
+check "(pct) 100 → reserve still binds"    '[ "$(win 100)" = "987K (1M·100%) 5%" ]'
+check "(pct) just over 100 ignored"        '[ "$(win 100.004)" = "987K 5%" ]'
 check "(pct) tiny fraction still applies"  '[ "$(win 0.001)" = "0K (1M·0.001%) 100%" ]'
-check "(pct) zero ignored"                 '[ "$(win 0)" = "1M 5%" ]'
+check "(pct) zero ignored"                 '[ "$(win 0)" = "987K 5%" ]'
 check "(pct) parseFloat prefix accepted"   '[ "$(win 50abc)" = "500K (1M·50%) 10%" ]'
-check "(pct) exponent notation rejected"   '[ "$(win 1e2)" = "1M 5%" ]'
-check "(pct) overlong digit run ignored"   '[ "$(win 99999999999999999999)" = "1M 5%" ]'
+check "(pct) exponent notation rejected"   '[ "$(win 1e2)" = "987K 5%" ]'
+check "(pct) overlong digit run ignored"   '[ "$(win 99999999999999999999)" = "987K 5%" ]'
+# The reserve is a fixed token count, so which arm of the CLI's min() binds
+# depends on the window. Both arms are exercised here.
+check "(pct) 99 on 1M → reserve arm wins"  '[ "$(win 99)" = "987K (1M·99%) 5%" ]'
+check "(pct) 98 on 1M → pct arm wins"      '[ "$(win 98)" = "980K (1M·98%) 5%" ]'
 check "(pct) applies to the ACW window"    '[ "$(export CLAUDE_CODE_AUTO_COMPACT_WINDOW=200000; win 50)" = "100K (200K·50%) 51%" ]'
+check "(pct) reserve applies to ACW too"   '[ "$(export CLAUDE_CODE_AUTO_COMPACT_WINDOW=200000; win UNSET)" = "187K 27%" ]'
+check "(pct) 95 on 200K → reserve arm"     '[ "$(export CLAUDE_CODE_AUTO_COMPACT_WINDOW=200000; win 95)" = "187K (200K·95%) 27%" ]'
+# A window at or below the reserve has nothing left to divide by; the full
+# window stands in rather than a zero or negative budget.
+check "(pct) window at the reserve"        '[ "$(export CLAUDE_CODE_AUTO_COMPACT_WINDOW=13000; win UNSET)" = "13K 100%" ]'
 
 echo
 echo "Result: $pass passed, $fail failed."
