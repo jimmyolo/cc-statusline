@@ -110,6 +110,17 @@ The full mapping (with paired-disable annotations) lives at the top of [`cc-stat
 | L3 | cache-hit · tokens in/out · api wait · agents (magenta=running, dim=last seen) |
 | L4 | running tools · todos (with current task) · last prompt (with `❯` marker) — entire line conditionally rendered |
 
+### L1 hyperlinks
+
+Two OSC 8 links on L1, both derived from `origin` — no API call, no extra process:
+
+| Text | Opens |
+|---|---|
+| repo name | the repository page |
+| branch name | that branch's pull/merge requests, filtered by source branch |
+
+A host containing `gitlab` gets GitLab's URL shapes (`/-/merge_requests?source_branch=…`), everything else GitHub's (`/pulls?q=head:…`). The branch link is omitted on a detached HEAD, where the displayed name is a remote ref or the literal `detached` and would filter nothing.
+
 ### Context bar denominator
 
 The context bar and its `%` are **not** the `used_percentage` Claude Code sends on stdin. That field divides current usage by the *raw* model window (1,000,000 for `[1m]` models) and ignores `CLAUDE_CODE_AUTO_COMPACT_WINDOW`, while auto-compact measures against a window that *does* honour it — so with the env var set the bar could read ~17% at the moment compaction fires. Both scripts instead recompute the window as `min(context_window_size, CLAUDE_CODE_AUTO_COMPACT_WINDOW)`, then derive the budget from it as described below, and the L1 window label shows that budget. The displayed `%` divides by that budget instead, so it reads at or above stdin's `used_percentage` — the two often round to the same integer at low usage and diverge as the session fills, which is the point: the bar measures against where compaction actually fires.

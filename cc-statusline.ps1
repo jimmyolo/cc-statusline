@@ -402,10 +402,12 @@ if ($null -ne $CtxEff -and $CtxEff -gt 0) {
 
 # ── Git info ──────────────────────────────────────────────────
 $Branch = ''
+$OnBranch = $false
 & git rev-parse --git-dir 2>$null 1>$null
 $IsGit = ($LASTEXITCODE -eq 0)
 if ($IsGit) {
     $Branch = (& git branch --show-current 2>$null)
+    $OnBranch = [bool]$Branch
     # Detached HEAD (checkout of a sha, rebase, bisect) prints nothing. Without a
     # placeholder the whole (branch* M A D +N -N) block on L1 is suppressed, taking
     # the working-tree stats with it. The @<hash> after it names the commit.
@@ -428,11 +430,27 @@ if ($IsGit) {
 }
 
 $RepoLink = Split-Path -Leaf $Dir
+$BranchLink = $Branch
 $Remote = (& git remote get-url origin 2>$null)
 if ($Remote) {
-    $Remote = ($Remote -replace '^git@github\.com:', 'https://github.com/') -replace '\.git$', ''
+    # scp-style remotes carry no scheme, and the host is not always github.com —
+    # a self-hosted GitLab reaches here too. 'ssh://' forms already have a scheme
+    # and are left alone.
+    $Remote = ($Remote -replace '^git@([^:]+):', 'https://$1/') -replace '\.git$', ''
     $RepoName = Split-Path -Leaf $Remote
     $RepoLink = "$Esc]8;;$Remote$Bel$RepoName$Esc]8;;$Bel"
+    # Branch name links to its own merge requests, filtered by source branch —
+    # the number is not knowable without an API call. Only a checked-out local
+    # branch gets one: the detached-HEAD fallback above yields a remote ref or
+    # the literal 'detached', neither of which filters.
+    if ($OnBranch) {
+        if ($Remote -like '*gitlab*') {
+            $MrUrl = "$Remote/-/merge_requests?scope=all&state=all&source_branch=$Branch"
+        } else {
+            $MrUrl = "$Remote/pulls?q=is%3Apr+head%3A$Branch"
+        }
+        $BranchLink = "$Esc]8;;$MrUrl$Bel$Branch$Esc]8;;$Bel"
+    }
 }
 
 # Pwd subpath: show cwd relative to project root when inside a subdirectory.
@@ -528,7 +546,7 @@ if ($PwdSubpath) { $L1 += "${Dim}/${PwdSubpath}${Reset}" }
 
 # Consolidated git block: (branch* M A D +N -N) — suppress zero categories
 if ($Branch) {
-    $BranchParts = $Branch
+    $BranchParts = $BranchLink
     if ($GitM -gt 0 -or $GitA -gt 0 -or $GitD -gt 0) { $BranchParts += '*' }
     if ($GitM -gt 0) { $BranchParts += " ${Yellow}${GitM}M${Reset}${Dim}" }
     if ($GitA -gt 0) { $BranchParts += " ${Green}${GitA}A${Reset}${Dim}" }

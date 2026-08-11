@@ -378,6 +378,8 @@ GIT_COMMIT=""
 )
 [ -n "$_gitdir" ] && IS_GIT=1
 [ "$IS_GIT" -eq 1 ] && BRANCH="$(git branch --show-current 2>/dev/null)"
+ON_BRANCH=0
+[ -n "$BRANCH" ] && ON_BRANCH=1
 # Detached HEAD (checkout of a sha, rebase, bisect) prints nothing. Without a
 # placeholder the whole (branch* M A D +N -N) block on L1 is suppressed, taking
 # the working-tree stats with it. The @<hash> rendered right after names the commit.
@@ -400,11 +402,28 @@ fi
 
 REPO_LINK="${DIR##*/}"
 REMOTE=$(git remote get-url origin 2>/dev/null)
-REMOTE=${REMOTE/git@github.com:/https:\/\/github.com\/}
+# scp-style remotes carry no scheme, and the host is not always github.com —
+# a self-hosted GitLab reaches here too. `ssh://` forms already have a scheme
+# and are left alone.
+case $REMOTE in
+  git@*) REMOTE=${REMOTE#git@}; REMOTE="https://${REMOTE/:/\/}" ;;
+esac
 REMOTE=${REMOTE%.git}
+BRANCH_LINK="$BRANCH"
 if [ -n "$REMOTE" ]; then
   REPO_NAME=${REMOTE##*/}
   REPO_LINK=$(printf '%b' "\e]8;;${REMOTE}\a${REPO_NAME}\e]8;;\a")
+  # Branch name links to its own merge requests, filtered by source branch —
+  # the number is not knowable without an API call, and this path may not spawn.
+  # Only a checked-out local branch gets one: the detached-HEAD fallback above
+  # yields a remote ref or the literal `detached`, neither of which filters.
+  if [ "$ON_BRANCH" -eq 1 ]; then
+    case $REMOTE in
+      *gitlab*) _mr_url="${REMOTE}/-/merge_requests?scope=all&state=all&source_branch=${BRANCH}" ;;
+      *)        _mr_url="${REMOTE}/pulls?q=is%3Apr+head%3A${BRANCH}" ;;
+    esac
+    BRANCH_LINK=$(printf '%b' "\e]8;;${_mr_url}\a${BRANCH}\e]8;;\a")
+  fi
 fi
 
 # PWD subpath: show cwd relative to project root when inside a subdirectory.
@@ -522,7 +541,7 @@ L1="${L1}${SEP}${WHITE}${REPO_LINK}${RESET}"
 
 # ── Consolidated git block (AJ-25): (branch* M A D +N -N) — suppress zero categories ──
 if [ -n "$BRANCH" ]; then
-  BRANCH_PARTS="${BRANCH}"
+  BRANCH_PARTS="${BRANCH_LINK}"
   # Dirty marker: any of M/A/D > 0
   if { [ "$GIT_M" -gt 0 ] 2>/dev/null; } || { [ "$GIT_A" -gt 0 ] 2>/dev/null; } || { [ "$GIT_D" -gt 0 ] 2>/dev/null; }; then
     BRANCH_PARTS="${BRANCH_PARTS}*"
