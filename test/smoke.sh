@@ -52,6 +52,25 @@ check "contains session cost"          'grep -q "\$1.23" <<< "$plain"'
 check "contains today cost label"      'grep -qF "(today \$" <<< "$plain"'
 check "contains 5h rate limit"         'grep -q "5h 23%" <<< "$plain"'
 check "contains 7d rate limit"         'grep -q "7d 57%" <<< "$plain"'
+
+# ── Countdown day unit ────────────────────────────────────────
+# The 7d window resets up to 168h out, so its countdown has to read "2d 13h"
+# rather than "61h 44m". Both cases are pinned relative to now: the sample's
+# fixed resets_at sits in 2286, which proves the day branch renders and nothing
+# else about what it renders.
+countdown_7d() {  # $1 = seconds from now; echoes the plain 7d group from L2
+  local tmp; tmp=$(mktemp -t cc-statusline-countdown.XXXXXX)
+  jq --argjson t "$(( $(date +%s) + $1 ))" \
+     '.rate_limits.seven_day.resets_at = $t' "$SAMPLE" > "$tmp"
+  bash "$SCRIPT" < "$tmp" 2>/dev/null \
+    | sed -E 's/\x1b\[[0-9;]*[a-zA-Z]//g; s/\x1b\]8;;[^\x07]*\x07//g' \
+    | grep -oE '7d 57% \([^)]*\)'
+  rm -f "$tmp"
+}
+# The reported symptom. Operand order is load-bearing — swapped, this reads "13d 2h".
+check "(countdown) 61h44m reads 2d 13h" '[ "$(countdown_7d 222240)" = "7d 57% (2d 13h)" ]'
+# Just past the inclusive boundary: pins the "1d 0h" spelling against "24h 0m".
+check "(countdown) 24h+1m reads 1d 0h"  '[ "$(countdown_7d 86460)" = "7d 57% (1d 0h)" ]'
 check "contains in/out tokens"         'grep -q "in: 123.4K" <<< "$plain" && grep -q "out: 7.8K" <<< "$plain"'
 check "contains api wait line"         'grep -q "api wait" <<< "$plain"'
 check "contains cache hit %"           'grep -q "cache 97%" <<< "$plain"'

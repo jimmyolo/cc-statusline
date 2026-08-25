@@ -54,6 +54,25 @@ Test-Check "contains session cost" ($plain -match '\$1\.23')
 Test-Check "contains today cost label" ($plain -match '\(today \$')
 Test-Check "contains 5h rate limit" ($plain -match '5h 23%')
 Test-Check "contains 7d rate limit" ($plain -match '7d 57%')
+
+# ── Countdown day unit ────────────────────────────────────────
+# Mirrors smoke.sh. The 7d window resets up to 168h out, so its countdown has to
+# read "2d 13h" rather than "61h 44m". Both cases are pinned relative to now: the
+# sample's fixed resets_at sits in 2286, which proves the day branch renders and
+# nothing else about what it renders.
+function Get-Countdown7d {  # $Offset = seconds from now; returns the 7d group from L2
+    param([int64]$Offset)
+    $json = Get-Content -Raw $Sample | ConvertFrom-Json
+    $json.rate_limits.seven_day.resets_at = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() + $Offset
+    $o = ($json | ConvertTo-Json -Depth 10) | & $PwshExe -NoProfile -File $Script
+    $p = ($o -join "`n") -replace "`e\[[0-9;]*[a-zA-Z]", '' -replace "`e\]8;;[^`a]*`a", ''
+    if ($p -match '7d 57% \([^)]*\)') { return $Matches[0] }
+    return ''
+}
+# The reported symptom. Operand order is load-bearing — swapped, this reads "13d 2h".
+Test-Check "(countdown) 61h44m reads 2d 13h" ((Get-Countdown7d 222240) -eq '7d 57% (2d 13h)')
+# Just past the inclusive boundary: pins the "1d 0h" spelling against "24h 0m".
+Test-Check "(countdown) 24h+1m reads 1d 0h" ((Get-Countdown7d 86460) -eq '7d 57% (1d 0h)')
 Test-Check "contains in/out tokens" (($plain -match 'in: 123\.4K') -and ($plain -match 'out: 7\.8K'))
 Test-Check "contains api wait line" ($plain -match 'api wait')
 Test-Check "contains cache hit %" ($plain -match 'cache 97%')
