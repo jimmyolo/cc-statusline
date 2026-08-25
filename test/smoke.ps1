@@ -22,6 +22,7 @@ $PwshExe = Join-Path $PSHOME $PwshExeName
 Remove-Item Env:\CLAUDE_AUTOCOMPACT_PCT_OVERRIDE -ErrorAction SilentlyContinue
 Remove-Item Env:\CLAUDE_CODE_AUTO_COMPACT_WINDOW -ErrorAction SilentlyContinue
 Remove-Item Env:\CC_STATUSLINE_FORGE -ErrorAction SilentlyContinue
+Remove-Item Env:\CC_STATUSLINE_WEB_PORT -ErrorAction SilentlyContinue
 
 $Pass = 0
 $Fail = 0
@@ -224,6 +225,20 @@ try {
       ((Get-BranchLink 'https://github.com/o/r.git' 'x&y=z') -eq 'https://github.com/o/r/pulls?q=is%3Apr+head%3Ax%26y%3Dz')
     Test-Check "(link) branch # encoded" `
       ((Get-BranchLink 'https://github.com/o/r.git' 'x#y') -eq 'https://github.com/o/r/pulls?q=is%3Apr+head%3Ax%23y')
+
+    # The SSH port is not the web port; only the user knows which serves the UI.
+    $env:CC_STATUSLINE_WEB_PORT = '30001'
+    try {
+        Test-Check "(link) WEB_PORT added to ssh:// remote" `
+          ((Get-BranchLink 'ssh://git@10.0.0.1:30023/g/p.git' 'b') -eq 'https://10.0.0.1:30001/g/p/pulls?q=is%3Apr+head%3Ab')
+        Test-Check "(link) WEB_PORT added to scp remote" `
+          ((Get-BranchLink 'git@10.0.0.1:g/p.git' 'b') -eq 'https://10.0.0.1:30001/g/p/pulls?q=is%3Apr+head%3Ab')
+        # An https remote already carries the web port; don't double it.
+        Test-Check "(link) WEB_PORT leaves https remote alone" `
+          ((Get-BranchLink 'https://10.0.0.1:8080/g/p.git' 'b') -eq 'https://10.0.0.1:8080/g/p/pulls?q=is%3Apr+head%3Ab')
+    } finally {
+        Remove-Item Env:\CC_STATUSLINE_WEB_PORT -ErrorAction SilentlyContinue
+    }
 
     # A self-hosted instance whose host names no forge is unreachable by any guess.
     $env:CC_STATUSLINE_FORGE = 'gitlab'

@@ -16,7 +16,7 @@ SAMPLE="$SCRIPT_DIR/sample.json"
 # — a suite run inside a session inherits them without any shell doing it.
 unset CLAUDE_AUTOCOMPACT_PCT_OVERRIDE
 unset CLAUDE_CODE_AUTO_COMPACT_WINDOW
-unset CC_STATUSLINE_FORGE
+unset CC_STATUSLINE_FORGE CC_STATUSLINE_WEB_PORT
 
 fail=0
 pass=0
@@ -213,6 +213,14 @@ check "(link) gitlab in path is not gitlab" \
 # Case-insensitive on purpose — the ps1 mirror's -like cannot be made otherwise.
 check "(link) mixed-case gitlab host matches" \
   '[ "$(link git@GitLab.example.com:g/p.git b)" = "https://GitLab.example.com/g/p/-/merge_requests?scope=all&state=all&source_branch=b" ]'
+# The SSH port is not the web port; only the user knows which one serves the UI.
+check "(link) WEB_PORT added to ssh:// remote" \
+  '[ "$(export CC_STATUSLINE_WEB_PORT=30001; link ssh://git@10.0.0.1:30023/g/p.git b)" = "https://10.0.0.1:30001/g/p/pulls?q=is%3Apr+head%3Ab" ]'
+check "(link) WEB_PORT added to scp remote" \
+  '[ "$(export CC_STATUSLINE_WEB_PORT=30001; link git@10.0.0.1:g/p.git b)" = "https://10.0.0.1:30001/g/p/pulls?q=is%3Apr+head%3Ab" ]'
+# An https remote already carries the web port; the override must not double it.
+check "(link) WEB_PORT leaves https remote alone" \
+  '[ "$(export CC_STATUSLINE_WEB_PORT=30001; link https://10.0.0.1:8080/g/p.git b)" = "https://10.0.0.1:8080/g/p/pulls?q=is%3Apr+head%3Ab" ]'
 # A self-hosted instance whose host names no forge is unreachable by any guess.
 check "(link) FORGE override wins" \
   '[ "$(export CC_STATUSLINE_FORGE=gitlab; link https://10.0.0.1:30001/g/p.git b)" = "https://10.0.0.1:30001/g/p/-/merge_requests?scope=all&state=all&source_branch=b" ]'

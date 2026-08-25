@@ -445,10 +445,19 @@ if ($Remote) {
     #   ssh://git@host:2222/grp/repo.git -> https://host/grp/repo
     #   deploy@host:grp/repo.git         -> https://host/grp/repo
     #   https://host:30001/grp/repo.git  -> https://host:30001/grp/repo
+    #
+    # The SSH port says nothing about which port serves the web UI, and a
+    # self-hosted forge often puts them on different ones. Only the user
+    # knows: CC_STATUSLINE_WEB_PORT is appended to the host of an SSH-derived
+    # URL, and left alone on an https remote, which carries its own port.
+    #
+    #   CC_STATUSLINE_WEB_PORT=30001
+    #   ssh://git@host:30023/grp/repo.git -> https://host:30001/grp/repo
+    $WebPort = if ($env:CC_STATUSLINE_WEB_PORT) { ":$($env:CC_STATUSLINE_WEB_PORT)" } else { '' }
     if ($Remote -like 'ssh://*') {
-        $Remote = $Remote -replace '^ssh://(?:[^@/]+@)?([^:/]+)(?::\d+)?/', 'https://$1/'
+        $Remote = $Remote -replace '^ssh://(?:[^@/]+@)?([^:/]+)(?::\d+)?/', "https://`$1$WebPort/"
     } elseif ($Remote -notlike '*://*') {
-        $Remote = $Remote -replace '^(?:[^@/]+@)?([^:/]+):', 'https://$1/'
+        $Remote = $Remote -replace '^(?:[^@/]+@)?([^:/]+):', "https://`$1$WebPort/"
     }
     $Remote = $Remote -replace '\.git$', ''
     $RepoName = Split-Path -Leaf $Remote

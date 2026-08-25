@@ -413,12 +413,23 @@ REMOTE=$(git remote get-url origin 2>/dev/null)
 #   ssh://git@host:2222/grp/repo.git → https://host/grp/repo
 #   deploy@host:grp/repo.git         → https://host/grp/repo
 #   https://host:30001/grp/repo.git  → https://host:30001/grp/repo
+#
+# The SSH port says nothing about which port serves the web UI, and a
+# self-hosted forge often puts them on different ones. Only the user knows:
+# CC_STATUSLINE_WEB_PORT is appended to the host of an SSH-derived URL, and
+# left alone on an https remote, which already carries its own port.
+#
+#   CC_STATUSLINE_WEB_PORT=30001
+#   ssh://git@host:30023/grp/repo.git → https://host:30001/grp/repo
+_web_port=""
+[ -n "$CC_STATUSLINE_WEB_PORT" ] && _web_port=":$CC_STATUSLINE_WEB_PORT"
 case $REMOTE in
   ssh://*) REMOTE=${REMOTE#ssh://}; REMOTE=${REMOTE#*@}
            _r_host=${REMOTE%%/*}
-           REMOTE="https://${_r_host%%:*}/${REMOTE#*/}" ;;
+           REMOTE="https://${_r_host%%:*}${_web_port}/${REMOTE#*/}" ;;
   *://*)   ;;
-  *@*:*)   REMOTE=${REMOTE#*@}; REMOTE="https://${REMOTE/:/\/}" ;;
+  *@*:*)   REMOTE=${REMOTE#*@}
+           REMOTE="https://${REMOTE%%:*}${_web_port}/${REMOTE#*:}" ;;
 esac
 REMOTE=${REMOTE%.git}
 BRANCH_LINK="$BRANCH"
