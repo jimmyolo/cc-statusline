@@ -266,9 +266,12 @@ fmt_countdown() {
   local reset_at=$1
   local diff=$(( reset_at - EPOCHSECONDS ))
   if [ "$diff" -le 0 ]; then echo "now"; return; fi
-  local h=$(( diff / 3600 ))
-  local m=$(( (diff % 3600) / 60 ))
-  printf "%dh %dm" "$h" "$m"
+  # Past a day the minutes are noise — "2d 13h" reads faster than "61h 44m".
+  if [ "$diff" -ge 86400 ]; then
+    printf "%dd %dh" $(( diff / 86400 )) $(( diff % 86400 / 3600 ))
+  else
+    printf "%dh %dm" $(( diff / 3600 )) $(( diff % 3600 / 60 ))
+  fi
 }
 
 # ── Helper: format token count (K/M) ──────────────────────────

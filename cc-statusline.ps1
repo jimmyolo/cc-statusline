@@ -79,6 +79,10 @@ function Format-Countdown {
     $now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
     $diff = [int64]$ResetAt - $now
     if ($diff -le 0) { return 'now' }
+    # Past a day the minutes are noise — "2d 13h" reads faster than "61h 44m".
+    if ($diff -ge 86400) {
+        return "{0}d {1}h" -f [int64][math]::Floor($diff / 86400), [int64][math]::Floor(($diff % 86400) / 3600)
+    }
     $h = [int64][math]::Floor($diff / 3600)
     $m = [int64][math]::Floor(($diff % 3600) / 60)
     return "{0}h {1}m" -f $h, $m
