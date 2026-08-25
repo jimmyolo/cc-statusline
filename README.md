@@ -112,7 +112,7 @@ The full mapping (with paired-disable annotations) lives at the top of [`cc-stat
 
 ### L1 hyperlinks
 
-Two OSC 8 links on L1, both derived from `origin` — no API call, no extra process:
+Two OSC 8 links on L1, both derived from `origin` — no API call, and one local ref lookup for the branch link:
 
 | Text | Opens |
 |---|---|
@@ -135,7 +135,7 @@ The URL shapes follow the forge, guessed from the **host** alone (matching the p
 export CC_STATUSLINE_FORGE=gitlab   # or github; overrides the host guess
 ```
 
-The branch link is omitted on a detached HEAD, where the displayed name is a remote ref or the literal `detached` and would filter nothing.
+The branch link is omitted where it would filter nothing: on a detached HEAD, whose displayed name is a remote ref or the literal `detached`, and on a branch `origin` has never seen — a throwaway worktree's local branch being the usual one. It appears once the branch is pushed.
 
 ### Context bar denominator
 

@@ -437,10 +437,17 @@ if [ -n "$REMOTE" ]; then
   REPO_NAME=${REMOTE##*/}
   REPO_LINK=$(printf '%b' "\e]8;;${REMOTE}\a${REPO_NAME}\e]8;;\a")
   # Branch name links to its own merge requests, filtered by source branch —
-  # the number is not knowable without an API call, and this path may not spawn.
+  # the number is not knowable without an API call.
   # Only a checked-out local branch gets one: the detached-HEAD fallback above
   # yields a remote ref or the literal `detached`, neither of which filters.
-  if [ "$ON_BRANCH" -eq 1 ]; then
+  #
+  # A branch the remote has never seen filters nothing either — the forge
+  # answers with an empty list. That is the common case in a throwaway
+  # worktree, whose branch is local scratch, so the link is built only once
+  # refs/remotes/origin/<branch> exists. It costs the one ref lookup below;
+  # nothing else on this path spawns.
+  if [ "$ON_BRANCH" -eq 1 ] &&
+     git show-ref --verify --quiet "refs/remotes/origin/$BRANCH" 2>/dev/null; then
     # Forge shape is guessed from the host alone — matching the path too would
     # read github.com/gitlab-org/gitlab as GitLab. A self-hosted instance often
     # names no forge at all (an IP, a bare hostname), which no guess can reach:

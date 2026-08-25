@@ -197,6 +197,10 @@ try {
         Push-Location $RepoTmp
         git remote set-url origin $Remote 2>&1 | Out-Null
         git checkout -q -B $BranchName main 2>&1 | Out-Null
+        # The branch link is built only for a branch the remote has, so the
+        # scratch repo has to look pushed. Get-LocalBranchLink is the unpushed
+        # counterpart.
+        git update-ref "refs/remotes/origin/$BranchName" HEAD 2>&1 | Out-Null
         $raw = Get-Content -Raw $Sample | & $PwshExe -NoProfile -File $Script
         Pop-Location
         $line = ($raw -join "`n") -split "`n" | Select-Object -First 1
@@ -204,6 +208,25 @@ try {
         if ($m.Count -eq 0) { return '' }
         return $m[$m.Count - 1].Groups[1].Value
     }
+
+    # A branch the remote never saw filters nothing — a throwaway worktree's
+    # local branch is the usual one. Only the repo link is left.
+    function Get-LocalBranchLink {  # same, but the branch is never pushed
+        param([string]$Remote, [string]$BranchName)
+        Push-Location $RepoTmp
+        git remote set-url origin $Remote 2>&1 | Out-Null
+        git checkout -q -B $BranchName main 2>&1 | Out-Null
+        git update-ref -d "refs/remotes/origin/$BranchName" 2>&1 | Out-Null
+        $raw = Get-Content -Raw $Sample | & $PwshExe -NoProfile -File $Script
+        Pop-Location
+        $line = ($raw -join "`n") -split "`n" | Select-Object -First 1
+        $m = [regex]::Matches($line, "`e\]8;;([^`a]*)`a")
+        if ($m.Count -eq 0) { return '' }
+        return $m[$m.Count - 1].Groups[1].Value
+    }
+
+    Test-Check "(link) unpushed branch -> repo link only" `
+      ((Get-LocalBranchLink 'https://github.com/o/r.git' 'wt-scratch') -eq 'https://github.com/o/r')
 
     Test-Check "(link) scp remote -> https PR search" `
       ((Get-BranchLink 'git@github.com:o/r.git' 'b') -eq 'https://github.com/o/r/pulls?q=is%3Apr+head%3Ab')

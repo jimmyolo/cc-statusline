@@ -193,6 +193,9 @@ link() {  # $1 = remote URL, $2 = branch; echoes the branch link (last OSC 8)
   git -C "$REPO_TMP" remote remove origin 2>/dev/null
   git -C "$REPO_TMP" remote add origin "$1"
   git -C "$REPO_TMP" checkout -q -B "$2" main
+  # The branch link is built only for a branch the remote has, so the scratch
+  # repo has to look pushed. `link_local` below is the unpushed counterpart.
+  git -C "$REPO_TMP" update-ref "refs/remotes/origin/$2" HEAD
   ( cd "$REPO_TMP" && bash "$SCRIPT" < "$SAMPLE" 2>/dev/null ) \
     | head -1 | grep -oP '\x1b\]8;;\K[^\x07]+' | tail -1
 }
@@ -224,6 +227,18 @@ check "(link) WEB_PORT leaves https remote alone" \
 # A self-hosted instance whose host names no forge is unreachable by any guess.
 check "(link) FORGE override wins" \
   '[ "$(export CC_STATUSLINE_FORGE=gitlab; link https://10.0.0.1:30001/g/p.git b)" = "https://10.0.0.1:30001/g/p/-/merge_requests?scope=all&state=all&source_branch=b" ]'
+# A branch the remote never saw filters nothing — a throwaway worktree's local
+# branch is the usual one. Only the repo link is left, and it is the last OSC 8.
+link_local() {  # $1 = remote URL, $2 = branch; same, but the branch is unpushed
+  git -C "$REPO_TMP" remote remove origin 2>/dev/null
+  git -C "$REPO_TMP" remote add origin "$1"
+  git -C "$REPO_TMP" checkout -q -B "$2" main
+  git -C "$REPO_TMP" update-ref -d "refs/remotes/origin/$2" 2>/dev/null
+  ( cd "$REPO_TMP" && bash "$SCRIPT" < "$SAMPLE" 2>/dev/null ) \
+    | head -1 | grep -oP '\x1b\]8;;\K[^\x07]+' | tail -1
+}
+check "(link) unpushed branch → repo link only" \
+  '[ "$(link_local https://github.com/o/r.git wt-scratch)" = "https://github.com/o/r" ]'
 # Unencoded, the & would append a parameter and the # would truncate the URL.
 check "(link) branch & and = encoded" \
   '[ "$(link https://github.com/o/r.git "x&y=z")" = "https://github.com/o/r/pulls?q=is%3Apr+head%3Ax%26y%3Dz" ]'

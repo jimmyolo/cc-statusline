@@ -466,7 +466,17 @@ if ($Remote) {
     # the number is not knowable without an API call. Only a checked-out local
     # branch gets one: the detached-HEAD fallback above yields a remote ref or
     # the literal 'detached', neither of which filters.
+    #
+    # A branch the remote has never seen filters nothing either — the forge
+    # answers with an empty list. That is the common case in a throwaway
+    # worktree, whose branch is local scratch, so the link is built only once
+    # refs/remotes/origin/<branch> exists.
+    $OnRemote = $false
     if ($OnBranch) {
+        & git show-ref --verify --quiet "refs/remotes/origin/$Branch" 2>$null
+        $OnRemote = ($LASTEXITCODE -eq 0)
+    }
+    if ($OnRemote) {
         # Forge shape is guessed from the host alone — matching the path too
         # would read github.com/gitlab-org/gitlab as GitLab. A self-hosted
         # instance often names no forge at all (an IP, a bare hostname), which
