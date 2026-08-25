@@ -224,6 +224,10 @@ check "(link) WEB_PORT added to scp remote" \
 # An https remote already carries the web port; the override must not double it.
 check "(link) WEB_PORT leaves https remote alone" \
   '[ "$(export CC_STATUSLINE_WEB_PORT=30001; link https://10.0.0.1:8080/g/p.git b)" = "https://10.0.0.1:8080/g/p/pulls?q=is%3Apr+head%3Ab" ]'
+# The value is spliced into a link target, so anything but digits is ignored —
+# `443/@evil.example.com` would otherwise point the link at another host.
+check "(link) non-numeric WEB_PORT ignored" \
+  '[ "$(export CC_STATUSLINE_WEB_PORT=443/@evil.example.com; link git@10.0.0.1:g/p.git b)" = "https://10.0.0.1/g/p/pulls?q=is%3Apr+head%3Ab" ]'
 # A self-hosted instance whose host names no forge is unreachable by any guess.
 check "(link) FORGE override wins" \
   '[ "$(export CC_STATUSLINE_FORGE=gitlab; link https://10.0.0.1:30001/g/p.git b)" = "https://10.0.0.1:30001/g/p/-/merge_requests?scope=all&state=all&source_branch=b" ]'

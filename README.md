@@ -127,7 +127,7 @@ The SSH port says nothing about which port serves the web UI, and a self-hosted 
 export CC_STATUSLINE_WEB_PORT=30001   # appended to the host of an SSH remote
 ```
 
-An `https` remote already carries its own port and is left alone.
+An `https` remote already carries its own port and is left alone. The value is spliced into a link target, so a non-numeric one is ignored rather than trusted.
 
 The URL shapes follow the forge, guessed from the **host** alone (matching the path too would read `github.com/gitlab-org/gitlab` as GitLab): a host containing `gitlab`, in any case, gets `/-/merge_requests?source_branch=…`; everything else gets `/pulls?q=head:…`. A self-hosted instance whose host names no forge — an IP, a bare hostname — is beyond any guess:
 
@@ -135,7 +135,7 @@ The URL shapes follow the forge, guessed from the **host** alone (matching the p
 export CC_STATUSLINE_FORGE=gitlab   # or github; overrides the host guess
 ```
 
-The branch link is omitted where it would filter nothing: on a detached HEAD, whose displayed name is a remote ref or the literal `detached`, and on a branch `origin` has never seen — a throwaway worktree's local branch being the usual one. It appears once the branch is pushed.
+The branch link is omitted where it would filter nothing: on a detached HEAD, whose displayed name is a remote ref or the literal `detached`, and on a branch with no `refs/remotes/origin/<branch>` — a throwaway worktree's local branch being the usual one. Pushing the branch creates that ref, and the link appears; a `clone --single-branch`, whose refspec never fetches other branches, is the case where a pushed branch still has no link.
 
 ### Context bar denominator
 

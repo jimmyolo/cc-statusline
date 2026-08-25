@@ -421,8 +421,13 @@ REMOTE=$(git remote get-url origin 2>/dev/null)
 #
 #   CC_STATUSLINE_WEB_PORT=30001
 #   ssh://git@host:30023/grp/repo.git → https://host:30001/grp/repo
+# Digits only: the value lands in the target of a clickable link, where a
+# stray `/` or `@` would send it to another host entirely.
 _web_port=""
-[ -n "$CC_STATUSLINE_WEB_PORT" ] && _web_port=":$CC_STATUSLINE_WEB_PORT"
+case $CC_STATUSLINE_WEB_PORT in
+  ''|*[!0-9]*) ;;
+  *)           _web_port=":$CC_STATUSLINE_WEB_PORT" ;;
+esac
 case $REMOTE in
   ssh://*) REMOTE=${REMOTE#ssh://}; REMOTE=${REMOTE#*@}
            _r_host=${REMOTE%%/*}

@@ -453,7 +453,11 @@ if ($Remote) {
     #
     #   CC_STATUSLINE_WEB_PORT=30001
     #   ssh://git@host:30023/grp/repo.git -> https://host:30001/grp/repo
-    $WebPort = if ($env:CC_STATUSLINE_WEB_PORT) { ":$($env:CC_STATUSLINE_WEB_PORT)" } else { '' }
+    # Digits only: the value lands in the target of a clickable link, where a
+    # stray '/' or '@' would send it to another host entirely — and in a .NET
+    # replacement string, where a '$' would re-expand the captured host.
+    # [0-9] and not \d, which .NET reads as any Unicode digit.
+    $WebPort = if ($env:CC_STATUSLINE_WEB_PORT -match '^[0-9]+$') { ":$($env:CC_STATUSLINE_WEB_PORT)" } else { '' }
     if ($Remote -like 'ssh://*') {
         $Remote = $Remote -replace '^ssh://(?:[^@/]+@)?([^:/]+)(?::\d+)?/', "https://`$1$WebPort/"
     } elseif ($Remote -notlike '*://*') {
