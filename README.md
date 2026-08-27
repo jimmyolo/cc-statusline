@@ -112,7 +112,7 @@ The full mapping (with paired-disable annotations) lives at the top of [`cc-stat
 
 ### L1 hyperlinks
 
-Two OSC 8 links on L1, both derived from `origin` — no API call, no extra process:
+Two OSC 8 links on L1, both derived from `origin` — no API call, and one local ref lookup for the branch link:
 
 | Text | Opens |
 |---|---|
@@ -121,13 +121,21 @@ Two OSC 8 links on L1, both derived from `origin` — no API call, no extra proc
 
 An SSH remote is not browsable, so both links are built from the web URL of the same repository — the SSH user and the `ssh://` port are dropped, while a port on an `https` remote is kept, since a self-hosted forge often serves its UI there.
 
+The SSH port says nothing about which port serves the web UI, and a self-hosted forge often puts them on different ones (`ssh://git@host:30023/…` answering at `https://host:30001/…`). Only the user knows, so:
+
+```sh
+export CC_STATUSLINE_WEB_PORT=30001   # appended to the host of an SSH remote
+```
+
+An `https` remote already carries its own port and is left alone. The value is spliced into a link target, so a non-numeric one is ignored rather than trusted.
+
 The URL shapes follow the forge, guessed from the **host** alone (matching the path too would read `github.com/gitlab-org/gitlab` as GitLab): a host containing `gitlab`, in any case, gets `/-/merge_requests?source_branch=…`; everything else gets `/pulls?q=head:…`. A self-hosted instance whose host names no forge — an IP, a bare hostname — is beyond any guess:
 
 ```sh
 export CC_STATUSLINE_FORGE=gitlab   # or github; overrides the host guess
 ```
 
-The branch link is omitted on a detached HEAD, where the displayed name is a remote ref or the literal `detached` and would filter nothing.
+The branch link is omitted where it would filter nothing: on a detached HEAD, whose displayed name is a remote ref or the literal `detached`, and on a branch with no `refs/remotes/origin/<branch>` — a throwaway worktree's local branch being the usual one. Pushing the branch creates that ref, and the link appears; a `clone --single-branch`, whose refspec never fetches other branches, is the case where a pushed branch still has no link.
 
 ### Context bar denominator
 

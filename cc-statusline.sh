@@ -413,12 +413,28 @@ REMOTE=$(git remote get-url origin 2>/dev/null)
 #   ssh://git@host:2222/grp/repo.git → https://host/grp/repo
 #   deploy@host:grp/repo.git         → https://host/grp/repo
 #   https://host:30001/grp/repo.git  → https://host:30001/grp/repo
+#
+# The SSH port says nothing about which port serves the web UI, and a
+# self-hosted forge often puts them on different ones. Only the user knows:
+# CC_STATUSLINE_WEB_PORT is appended to the host of an SSH-derived URL, and
+# left alone on an https remote, which already carries its own port.
+#
+#   CC_STATUSLINE_WEB_PORT=30001
+#   ssh://git@host:30023/grp/repo.git → https://host:30001/grp/repo
+# Digits only: the value lands in the target of a clickable link, where a
+# stray `/` or `@` would send it to another host entirely.
+_web_port=""
+case $CC_STATUSLINE_WEB_PORT in
+  ''|*[!0-9]*) ;;
+  *)           _web_port=":$CC_STATUSLINE_WEB_PORT" ;;
+esac
 case $REMOTE in
   ssh://*) REMOTE=${REMOTE#ssh://}; REMOTE=${REMOTE#*@}
            _r_host=${REMOTE%%/*}
-           REMOTE="https://${_r_host%%:*}/${REMOTE#*/}" ;;
+           REMOTE="https://${_r_host%%:*}${_web_port}/${REMOTE#*/}" ;;
   *://*)   ;;
-  *@*:*)   REMOTE=${REMOTE#*@}; REMOTE="https://${REMOTE/:/\/}" ;;
+  *@*:*)   REMOTE=${REMOTE#*@}
+           REMOTE="https://${REMOTE%%:*}${_web_port}/${REMOTE#*:}" ;;
 esac
 REMOTE=${REMOTE%.git}
 BRANCH_LINK="$BRANCH"
@@ -426,10 +442,17 @@ if [ -n "$REMOTE" ]; then
   REPO_NAME=${REMOTE##*/}
   REPO_LINK=$(printf '%b' "\e]8;;${REMOTE}\a${REPO_NAME}\e]8;;\a")
   # Branch name links to its own merge requests, filtered by source branch —
-  # the number is not knowable without an API call, and this path may not spawn.
+  # the number is not knowable without an API call.
   # Only a checked-out local branch gets one: the detached-HEAD fallback above
   # yields a remote ref or the literal `detached`, neither of which filters.
-  if [ "$ON_BRANCH" -eq 1 ]; then
+  #
+  # A branch the remote has never seen filters nothing either — the forge
+  # answers with an empty list. That is the common case in a throwaway
+  # worktree, whose branch is local scratch, so the link is built only once
+  # refs/remotes/origin/<branch> exists. It costs the one ref lookup below;
+  # nothing else on this path spawns.
+  if [ "$ON_BRANCH" -eq 1 ] &&
+     git show-ref --verify --quiet "refs/remotes/origin/$BRANCH" 2>/dev/null; then
     # Forge shape is guessed from the host alone — matching the path too would
     # read github.com/gitlab-org/gitlab as GitLab. A self-hosted instance often
     # names no forge at all (an IP, a bare hostname), which no guess can reach:
