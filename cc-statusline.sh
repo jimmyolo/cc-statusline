@@ -6,11 +6,10 @@
 #   ✅ active   ❌ block currently commented out (paired-disable candidate)
 #
 #   F[ 0] MODEL              .model.display_name                         → L1 model badge + EFFORT default lookup
-#   F[ 1] DIR                .workspace.current_dir                      → REPO_LINK basename (fallback when no git remote) + PWD subpath
-#   F[22] PROJECT_DIR        .workspace.project_dir                      → L1 PWD subpath (cwd relative to project root)
+#   F[ 1] DIR                .workspace.current_dir                      → L1 cwd (PS1-style, ~-collapsed) + repo hyperlink
 #   F[ 2] COST               .cost.total_cost_usd                        → L2 cost + today-cost tracker
 #   F[ 3] PCT                .context_window.used_percentage             → L2 context bar + % label (fallback only; recomputed vs CTX_EFF, l. ~284)
-#   F[ 4] CTX_SIZE           .context_window.context_window_size         → CTX_EFF → L1 window label + L2 % denominator
+#   F[ 4] CTX_SIZE           .context_window.context_window_size         → CTX_EFF → L2 window label + % denominator
 #   F[ 5] DURATION_MS        .cost.total_duration_ms                     → L3 api wait %  ❌ DUR (l.252)  ❌ burn rate (l.345)
 #   F[ 6] LINES_ADD          .cost.total_lines_added                     → L1 +N lines
 #   F[ 7] LINES_DEL          .cost.total_lines_removed                   → L1 -N lines
@@ -26,13 +25,13 @@
 #   F[17] CACHE_READ         .context_window.current_usage.cache_read_input_tokens      → L3 cache hit + cur read  + L2 % numerator
 #   F[18] CACHE_CREATE       .context_window.current_usage.cache_creation_input_tokens  → L3 cache hit + cur write + L2 % numerator
 #   F[19] CUR_INPUT          .context_window.current_usage.input_tokens                 → L3 cache hit + cur in    + L2 % numerator
-#   F[20] SESSION_ID         .session_id                                 → today-cost tracker + last-prompt lookup
+#   F[20] SESSION_ID         .session_id                                 → L3 session id + today-cost tracker + last-prompt lookup
 #   F[21] TRANSCRIPT_PATH    .transcript_path                            → L4 agents / tools / todos
 #
 # Display layout:
-#   L1: model + ctx-size + version + repo + branch + lines + git-stats + vim
-#   L2: ctx-bar + cost + today-cost + 5h + 7d
-#   L3: cache-hit + tokens + api-wait + agents-or-last-agent   (❌ cur-token-detail disabled — see l. ~413)
+#   L1: model + user:cwd + branch:commit + git-stats + vim + account
+#   L2: ctx-bar + ctx-size + cost + today-cost + 5h + 7d
+#   L3: cache-hit + tokens + api-wait + session-id   (❌ cur-token-detail disabled — see l. ~413)
 #   L4: running-tools + todos + last-prompt   (only printed if non-empty)
 #
 # To disable a display block: comment the block, then check this map — if an
@@ -65,15 +64,14 @@ readarray -t F < <(jq -r '
   .context_window.current_usage.cache_creation_input_tokens // "",
   .context_window.current_usage.input_tokens // "",
   .session_id // "",
-  .transcript_path // "",
-  .workspace.project_dir // ""
+  .transcript_path // ""
 ' <<< "$input")
 
 MODEL=${F[0]}              # → L1 model + EFFORT default
-DIR=${F[1]}                # → REPO_LINK basename fallback
+DIR=${F[1]}                # → L1 user:cwd + repo hyperlink
 COST=${F[2]}               # → L2 cost + today tracker
 PCT=${F[3]}                # → L2 context bar + %  (fallback; recomputed vs CTX_EFF)
-CTX_SIZE=${F[4]}           # → CTX_EFF → L1 window label + L2 % denominator
+CTX_SIZE=${F[4]}           # → CTX_EFF → L2 window label + % denominator
 DURATION_MS=${F[5]}        # → L3 api wait %  + ❌DUR + ❌burn (shared, do NOT disable extraction)
 LINES_ADD=${F[6]}          # → L1 +lines
 LINES_DEL=${F[7]}          # → L1 -lines
@@ -89,9 +87,8 @@ API_DURATION_MS=${F[16]}   # → L3 api wait
 CACHE_READ=${F[17]}        # → L3 cache hit + cur read  + L2 % numerator (shared)
 CACHE_CREATE=${F[18]}      # → L3 cache hit + cur write + L2 % numerator (shared)
 CUR_INPUT=${F[19]}         # → L3 cache hit + cur in    + L2 % numerator (shared)
-SESSION_ID=${F[20]}        # → today tracker + last-prompt lookup
+SESSION_ID=${F[20]}        # → L3 session id + today tracker + last-prompt lookup
 TRANSCRIPT_PATH=${F[21]}   # → L4 agents/tools/todos
-PROJECT_DIR=${F[22]}       # → L1 PWD subpath
 
 # ── Effort / thinking level (from settings.json) ──────────────
 EFFORT=$(jq -r '.effortLevel // empty' "$HOME/.claude/settings.json" 2>/dev/null)
@@ -232,6 +229,12 @@ if [ -f "$HISTORY_FILE" ] && [ -n "$SESSION_ID" ]; then
     fi
   fi
 fi
+
+# Branch glyph (U+E0A0, Powerline) — same one ~/.bashrc's PS1 uses.
+GIT_GLYPH=$'\ue0a0'
+
+# Shell user, as PS1's \u shows it.
+USER_NAME=${USER:-$(id -un 2>/dev/null)}
 
 # ── Colors ────────────────────────────────────────────────────
 RESET='\033[0m'; BOLD='\033[1m'; DIM='\033[2m'
@@ -403,7 +406,6 @@ if [ "$IS_GIT" -eq 1 ] && [ -z "$BRANCH" ]; then
   [ -z "$BRANCH" ] && BRANCH="detached"
 fi
 
-REPO_LINK="${DIR##*/}"
 REMOTE=$(git remote get-url origin 2>/dev/null)
 # An SSH remote is not browsable, so it is rewritten to the web URL of the
 # same repository. The SSH user and the ssh:// port are transport details and
@@ -422,66 +424,76 @@ case $REMOTE in
 esac
 REMOTE=${REMOTE%.git}
 BRANCH_LINK="$BRANCH"
-if [ -n "$REMOTE" ]; then
-  REPO_NAME=${REMOTE##*/}
-  REPO_LINK=$(printf '%b' "\e]8;;${REMOTE}\a${REPO_NAME}\e]8;;\a")
-  # Branch name links to its own merge requests, filtered by source branch —
-  # the number is not knowable without an API call, and this path may not spawn.
+if [ -n "$REMOTE" ] && [ "$ON_BRANCH" -eq 1 ]; then
+  # Branch name links to the branch's own tree on the forge — opening it both
+  # shows the code at that ref and switches the forge's branch selector to it.
   # Only a checked-out local branch gets one: the detached-HEAD fallback above
-  # yields a remote ref or the literal `detached`, neither of which filters.
-  if [ "$ON_BRANCH" -eq 1 ]; then
-    # Forge shape is guessed from the host alone — matching the path too would
-    # read github.com/gitlab-org/gitlab as GitLab. A self-hosted instance often
-    # names no forge at all (an IP, a bare hostname), which no guess can reach:
-    # CC_STATUSLINE_FORGE=gitlab|github settles those. Lowercased to match the
-    # ps1, whose -like is case-insensitive and cannot be made otherwise without
-    # -clike.
-    _forge=$CC_STATUSLINE_FORGE
-    if [ -z "$_forge" ]; then
-      _r_host=${REMOTE#https://}
-      _r_host=${_r_host%%/*}
-      case ${_r_host,,} in
-        *gitlab*) _forge=gitlab ;;
-        *)        _forge=github ;;
-      esac
-    fi
-    # Every byte git allows in a ref that also means something in a query
-    # string. Unencoded, `&` appends a parameter and `#` truncates the URL.
-    _b_enc=""
-    for ((_i = 0; _i < ${#BRANCH}; _i++)); do
-      _c=${BRANCH:_i:1}
-      case $_c in
-        '%') _b_enc="${_b_enc}%25" ;;
-        '&') _b_enc="${_b_enc}%26" ;;
-        '#') _b_enc="${_b_enc}%23" ;;
-        '+') _b_enc="${_b_enc}%2B" ;;
-        ';') _b_enc="${_b_enc}%3B" ;;
-        '=') _b_enc="${_b_enc}%3D" ;;
-        '?') _b_enc="${_b_enc}%3F" ;;
-        ' ') _b_enc="${_b_enc}%20" ;;
-        *)   _b_enc="${_b_enc}${_c}" ;;
-      esac
-    done
-    if [ "$_forge" = gitlab ]; then
-      _mr_url="${REMOTE}/-/merge_requests?scope=all&state=all&source_branch=${_b_enc}"
-    else
-      _mr_url="${REMOTE}/pulls?q=is%3Apr+head%3A${_b_enc}"
-    fi
-    BRANCH_LINK=$(printf '%b' "\e]8;;${_mr_url}\a${BRANCH}\e]8;;\a")
+  # yields a remote ref or the literal `detached`, neither of which is a branch
+  # the forge would resolve.
+  #
+  # Forge shape is guessed from the host alone — matching the path too would
+  # read github.com/gitlab-org/gitlab as GitLab. A self-hosted instance often
+  # names no forge at all (an IP, a bare hostname), which no guess can reach:
+  # CC_STATUSLINE_FORGE=gitlab|github settles those. Lowercased to match the
+  # ps1, whose -like is case-insensitive and cannot be made otherwise without
+  # -clike.
+  _forge=$CC_STATUSLINE_FORGE
+  if [ -z "$_forge" ]; then
+    _r_host=${REMOTE#https://}
+    _r_host=${_r_host%%/*}
+    case ${_r_host,,} in
+      *gitlab*) _forge=gitlab ;;
+      *)        _forge=github ;;
+    esac
   fi
+  # The ref lands in a URL *path*, where `/` is the one byte that must survive
+  # verbatim (`feat/x` is a real branch and a real tree path). Only the three
+  # bytes git allows in a ref that would break the path are escaped: `%` (an
+  # escape itself), `#` (truncates the URL) and `?` (starts a query string).
+  # A space is escaped too — legal in no URL.
+  _b_enc=""
+  for ((_i = 0; _i < ${#BRANCH}; _i++)); do
+    _c=${BRANCH:_i:1}
+    case $_c in
+      '%') _b_enc="${_b_enc}%25" ;;
+      '#') _b_enc="${_b_enc}%23" ;;
+      '?') _b_enc="${_b_enc}%3F" ;;
+      ' ') _b_enc="${_b_enc}%20" ;;
+      *)   _b_enc="${_b_enc}${_c}" ;;
+    esac
+  done
+  if [ "$_forge" = gitlab ]; then
+    _tree_url="${REMOTE}/-/tree/${_b_enc}"
+  else
+    _tree_url="${REMOTE}/tree/${_b_enc}"
+  fi
+  BRANCH_LINK=$(printf '%b' "\e]8;;${_tree_url}\a${BRANCH}\e]8;;\a")
 fi
 
-# PWD subpath: show cwd relative to project root when inside a subdirectory.
-# project_dir is supplied by the harness; fall back to git toplevel if absent.
-PWD_SUBPATH=""
-_proj="$PROJECT_DIR"
-if [ -z "$_proj" ]; then
-  _proj=$(git rev-parse --show-toplevel 2>/dev/null)
-fi
-if [ -n "$_proj" ] && [ -n "$DIR" ] && [ "$DIR" != "$_proj" ]; then
-  case "$DIR" in
-    "$_proj"/*) PWD_SUBPATH="${DIR#$_proj/}" ;;
-  esac
+# Working directory, PS1-style: the whole path, $HOME collapsed to ~ for display
+# while the link keeps the absolute one. A `file://` target opens the directory
+# in the desktop file manager, which is what a path is wanted for; the forge page
+# is one click further along the branch name.
+PWD_DISP="$DIR"
+case "$PWD_DISP" in
+  "$HOME")   PWD_DISP="~" ;;
+  "$HOME"/*) PWD_DISP="~${PWD_DISP#$HOME}" ;;
+esac
+PWD_LINK="$PWD_DISP"
+if [ -n "$DIR" ]; then
+  # Same three-byte rule as the ref above, on a path that may hold anything.
+  _d_enc=""
+  for ((_i = 0; _i < ${#DIR}; _i++)); do
+    _c=${DIR:_i:1}
+    case $_c in
+      '%') _d_enc="${_d_enc}%25" ;;
+      '#') _d_enc="${_d_enc}%23" ;;
+      '?') _d_enc="${_d_enc}%3F" ;;
+      ' ') _d_enc="${_d_enc}%20" ;;
+      *)   _d_enc="${_d_enc}${_c}" ;;
+    esac
+  done
+  PWD_LINK=$(printf '%b' "\e]8;;file://${_d_enc}\a${PWD_DISP}\e]8;;\a")
 fi
 
 # ── Context bar ───────────────────────────────────────────────
@@ -550,58 +562,40 @@ fi
 
 # ── Login account (from ~/.claude.json) ───────────────────────
 # Source: .oauthAccount — not in statusline stdin JSON, read directly like EFFORT.
-# Display: displayName + redacted email (local part masked to first char).
+# Display: redacted email only (local part masked to first char) — displayName
+# is dropped, the email already identifies the account.
 ACCOUNT=""
-# One jq, two lines: ~/.claude.json is ~140KB, so parsing it twice costs more
-# than everything else on this path. `// ""` rather than `// empty` — a dropped
-# line would shift the email into the name.
-ACCT_NAME=""
-ACCT_EMAIL=""
-{ read -r ACCT_NAME; read -r ACCT_EMAIL; } < <(
-  jq -r '(.oauthAccount.displayName // ""), (.oauthAccount.emailAddress // "")' \
-     "$HOME/.claude.json" 2>/dev/null
-)
-ACCT_REDACTED=""
+ACCT_EMAIL=$(jq -r '.oauthAccount.emailAddress // ""' "$HOME/.claude.json" 2>/dev/null)
 if [ -n "$ACCT_EMAIL" ]; then
   ACCT_REDACTED="${ACCT_EMAIL%%@*}"
   ACCT_REDACTED="${ACCT_REDACTED:0:1}***@${ACCT_EMAIL#*@}"
-fi
-if [ -n "$ACCT_NAME" ] && [ -n "$ACCT_REDACTED" ]; then
-  ACCOUNT="👤 ${ACCT_NAME} ${DIM}·${RESET} ${DIM}${ACCT_REDACTED}${RESET}"
-elif [ -n "$ACCT_NAME" ]; then
-  ACCOUNT="👤 ${ACCT_NAME}"
-elif [ -n "$ACCT_REDACTED" ]; then
   ACCOUNT="👤 ${DIM}${ACCT_REDACTED}${RESET}"
 fi
 
 # ══════════════════════════════════════════════════════════════
-# LINE 1: Model + Context size + Version + Repo + Branch + Lines + Files + Agent + Account
-# INPUTS: MODEL_DISP CTX_LABEL VERSION REPO_LINK BRANCH LINES_ADD LINES_DEL GIT_STATS VIM_MODE ACCOUNT
+# LINE 1: Model + user:cwd + branch:commit + git stats + Vim + Account
+# INPUTS: MODEL_DISP PWD_LINK BRANCH_LINK GIT_COMMIT GIT_STATS VIM_MODE ACCOUNT
 # ══════════════════════════════════════════════════════════════
 L1="${CYAN}${BOLD}${MODEL_DISP}${RESET}"
-[ -n "$CTX_LABEL" ] && L1="${L1} ${CTX_LABEL}"
 # [ -n "$VERSION" ] && L1="${L1} ${DIM}v${VERSION}${RESET}"   # Hidden per AJ-25 — uncomment to re-enable Claude Code version.
-L1="${L1}${SEP}${WHITE}${REPO_LINK}${RESET}"
-[ -n "$PWD_SUBPATH" ] && L1="${L1}${DIM}/${PWD_SUBPATH}${RESET}"
 
-# ── Consolidated git block (AJ-25): (branch* M A D +N -N) — suppress zero categories ──
+# ── Project state, mirroring the shell prompt: user:cwd  branch:commit (M A D +N -N) ──
+# Same shape as ~/.bashrc's PS1 (magenta user, green path, dim  branch:hash), so
+# the statusline reads as the prompt the user already scans.
+L1="${L1}${SEP}${MAGENTA}${BOLD}${USER_NAME}${RESET}${DIM}:${RESET}${BOLD}${GREEN}${PWD_LINK}${RESET}"
 if [ -n "$BRANCH" ]; then
-  BRANCH_PARTS="${BRANCH_LINK}"
-  # Dirty marker: any of M/A/D > 0
-  if { [ "$GIT_M" -gt 0 ] 2>/dev/null; } || { [ "$GIT_A" -gt 0 ] 2>/dev/null; } || { [ "$GIT_D" -gt 0 ] 2>/dev/null; }; then
-    BRANCH_PARTS="${BRANCH_PARTS}*"
-  fi
-  [ "$GIT_M" -gt 0 ] 2>/dev/null && BRANCH_PARTS="${BRANCH_PARTS} ${YELLOW}${GIT_M}M${RESET}${DIM}"
-  [ "$GIT_A" -gt 0 ] 2>/dev/null && BRANCH_PARTS="${BRANCH_PARTS} ${GREEN}${GIT_A}A${RESET}${DIM}"
-  [ "$GIT_D" -gt 0 ] 2>/dev/null && BRANCH_PARTS="${BRANCH_PARTS} ${RED}${GIT_D}D${RESET}${DIM}"
-  [ "$GIT_LINES_ADD" -gt 0 ] 2>/dev/null && BRANCH_PARTS="${BRANCH_PARTS} ${GREEN}+${GIT_LINES_ADD}${RESET}${DIM}"
-  [ "$GIT_LINES_DEL" -gt 0 ] 2>/dev/null && BRANCH_PARTS="${BRANCH_PARTS} ${RED}-${GIT_LINES_DEL}${RESET}${DIM}"
-  L1="${L1} ${DIM}(${BRANCH_PARTS})${RESET}"
+  L1="${L1} ${WHITE}${GIT_GLYPH}${RESET} ${WHITE}${BRANCH_LINK}${RESET}"
+  [ -n "$GIT_COMMIT" ] && L1="${L1}${DIM}:${RESET}${MAGENTA}${GIT_COMMIT}${RESET}"
 fi
 
-# ── Current commit short hash (after worktree/branch block) ──
-[ -n "$GIT_COMMIT" ] && L1="${L1} ${DIM}@${RESET}${MAGENTA}${GIT_COMMIT}${RESET}"
-
+# Working-tree stats — suppress zero categories, drop the whole group when clean.
+GIT_STATS=""
+[ "$GIT_M" -gt 0 ] 2>/dev/null && GIT_STATS="${GIT_STATS} ${YELLOW}${GIT_M}M${RESET}${DIM}"
+[ "$GIT_A" -gt 0 ] 2>/dev/null && GIT_STATS="${GIT_STATS} ${GREEN}${GIT_A}A${RESET}${DIM}"
+[ "$GIT_D" -gt 0 ] 2>/dev/null && GIT_STATS="${GIT_STATS} ${RED}${GIT_D}D${RESET}${DIM}"
+[ "$GIT_LINES_ADD" -gt 0 ] 2>/dev/null && GIT_STATS="${GIT_STATS} ${GREEN}+${GIT_LINES_ADD}${RESET}${DIM}"
+[ "$GIT_LINES_DEL" -gt 0 ] 2>/dev/null && GIT_STATS="${GIT_STATS} ${RED}-${GIT_LINES_DEL}${RESET}${DIM}"
+[ -n "$GIT_STATS" ] && L1="${L1} ${DIM}(${GIT_STATS# })${RESET}"
 
 [ -n "$VIM_MODE" ] && {
   if [ "$VIM_MODE" = "NORMAL" ]; then
@@ -615,12 +609,14 @@ fi
 [ -n "$ACCOUNT" ] && L1="${L1}${SEP}${ACCOUNT}"
 
 # ══════════════════════════════════════════════════════════════
-# LINE 2: Context bar + Cost + Duration + Rate limits (5h & 7d with countdown)
-# INPUTS: BAR PCT COST TODAY_COST RATE_5H RESET_5H RATE_7D RESET_7D
+# LINE 2: Context bar + Window label + Cost + Rate limits (5h & 7d with countdown)
+# INPUTS: BAR PCT CTX_LABEL COST TODAY_COST RATE_5H RESET_5H RATE_7D RESET_7D
 # ══════════════════════════════════════════════════════════════
 COST_FMT=$(printf '$%.2f' "$COST")
 TODAY_FMT=$(printf '$%.2f' "$TODAY_COST")
-L2="${BAR} ${DIM}${PCT}%${RESET}${SEP}${YELLOW}${COST_FMT}${RESET} ${DIM}(today ${TODAY_FMT})${RESET}"
+L2="${BAR} ${DIM}${PCT}%${RESET}"
+[ -n "$CTX_LABEL" ] && L2="${L2} ${CTX_LABEL}"
+L2="${L2}${SEP}${YELLOW}${COST_FMT}${RESET} ${DIM}(today ${TODAY_FMT})${RESET}"
 
 if [ -n "$RATE_5H" ]; then
   R5_INT=$(printf "%.0f" "$RATE_5H")
@@ -643,7 +639,7 @@ if [ -n "$RATE_7D" ]; then
 fi
 
 # ══════════════════════════════════════════════════════════════
-# LINE 3: Cache hit rate + Tokens + API wait + Current token detail
+# LINE 3: Cache hit rate + Tokens + API wait + Session lines + Session id
 # INPUTS: CACHE_HIT (←CACHE_READ+CACHE_CREATE+CUR_INPUT)  TOTAL_IN_TOKENS TOTAL_OUT_TOKENS
 #         API_DURATION_MS DURATION_MS  CUR_INPUT CACHE_READ CACHE_CREATE
 # ══════════════════════════════════════════════════════════════
@@ -688,6 +684,9 @@ if [ -n "$LINES_DEL" ] && [ "$LINES_DEL" != "0" ]; then
   [ -n "$SESSION_LINES_PART" ] && SESSION_LINES_PART="${SESSION_LINES_PART} ${RED}-${LINES_DEL}${RESET}" || SESSION_LINES_PART="${RED}-${LINES_DEL}${RESET}"
 fi
 [ -n "$SESSION_LINES_PART" ] && L3="${L3}${SEP}${SESSION_LINES_PART} ${DIM}lines${RESET}"
+
+# Session id, in full — copyable for `--resume` and for session messaging.
+[ -n "$SESSION_ID" ] && L3="${L3}${SEP}${DIM}#${SESSION_ID}${RESET}"
 
 # Tools running — moved from L4 to L3 (after api wait + session lines) per user preference.
 [ "$RUNNING_TOOL_COUNT" -gt 0 ] && L3="${L3}${SEP}${DIM}tools${RESET} ${YELLOW}${RUNNING_TOOLS}${RESET}"

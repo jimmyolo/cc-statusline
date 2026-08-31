@@ -77,6 +77,11 @@ Test-Check "contains in/out tokens" (($plain -match 'in: 123\.4K') -and ($plain 
 Test-Check "contains api wait line" ($plain -match 'api wait')
 Test-Check "contains cache hit %" ($plain -match 'cache 97%')
 Test-Check "contains vim NORMAL marker" ($plain -match 'NOR')
+$plainLines = $plain -split "`n"
+Test-Check "session id renders on L3"    ($plainLines[2] -match '#test-session-id-xyz')
+Test-Check "cwd links to file://"        (($out -join "`n") -match 'file:///home/jimmy/projects/conex/jj')
+Test-Check "L1 carries user:cwd"         ($plainLines[0] -match '\| [^ :]+:[~/]')
+Test-Check "account shows email only"    (-not ($plain -match "$([char]0x1F464) [^ ]+ $([char]0x00B7) "))
 
 # ── Second pass: with a real transcript that has active agents/tools/todos ──
 Write-Output ""
@@ -124,9 +129,9 @@ function Get-WindowLabel {
         $o = Get-Content -Raw $Sample | & $PwshExe -NoProfile -File $Script
         $p = ($o -join "`n") -replace "`e\[[0-9;]*[a-zA-Z]", '' -replace "`e\]8;;[^`a]*`a", ''
         $lines = $p -split "`n"
-        $win = if ($lines[0] -match '\(M\) ([^|]*) \|') { $Matches[1] } else { '?' }
-        $bar = if ($lines[1] -match "[$Bullet ] ([0-9]+%)") { $Matches[1] } else { '?' }
-        "$win $bar"
+        # Both live on L2 now: `<bar> <pct>% <label> | ...` — echoed label-first,
+        # so the expected strings below keep reading "<label> <pct>%".
+        if ($lines[1] -match ' ([0-9]+%) ([^|]*) \|') { "$($Matches[2]) $($Matches[1])" } else { '? ?' }
     } finally {
         Remove-Item Env:\CLAUDE_AUTOCOMPACT_PCT_OVERRIDE -ErrorAction SilentlyContinue
     }
@@ -204,32 +209,37 @@ try {
         return $m[$m.Count - 1].Groups[1].Value
     }
 
-    Test-Check "(link) scp remote -> https PR search" `
-      ((Get-BranchLink 'git@github.com:o/r.git' 'b') -eq 'https://github.com/o/r/pulls?q=is%3Apr+head%3Ab')
+    Test-Check "(link) scp remote -> https tree URL" `
+      ((Get-BranchLink 'git@github.com:o/r.git' 'b') -eq 'https://github.com/o/r/tree/b')
     # An SSH remote is unbrowsable as given; the user and the SSH port are dropped.
     Test-Check "(link) ssh:// remote loses user+port" `
-      ((Get-BranchLink 'ssh://git@gitlab.example.com:2222/g/p.git' 'b') -eq 'https://gitlab.example.com/g/p/-/merge_requests?scope=all&state=all&source_branch=b')
+      ((Get-BranchLink 'ssh://git@gitlab.example.com:2222/g/p.git' 'b') -eq 'https://gitlab.example.com/g/p/-/tree/b')
     # ...but a port on an https remote is the web UI's own and must survive.
     Test-Check "(link) https port survives" `
-      ((Get-BranchLink 'https://10.0.0.1:30001/g/p.git' 'b') -eq 'https://10.0.0.1:30001/g/p/pulls?q=is%3Apr+head%3Ab')
+      ((Get-BranchLink 'https://10.0.0.1:30001/g/p.git' 'b') -eq 'https://10.0.0.1:30001/g/p/tree/b')
     Test-Check "(link) non-git ssh user rewritten" `
-      ((Get-BranchLink 'deploy@git.example.com:g/p.git' 'b') -eq 'https://git.example.com/g/p/pulls?q=is%3Apr+head%3Ab')
+      ((Get-BranchLink 'deploy@git.example.com:g/p.git' 'b') -eq 'https://git.example.com/g/p/tree/b')
     # The forge guess reads the host only: this repo lives on GitHub.
     Test-Check "(link) gitlab in path is not gitlab" `
-      ((Get-BranchLink 'https://github.com/gitlab-org/gitlab.git' 'b') -eq 'https://github.com/gitlab-org/gitlab/pulls?q=is%3Apr+head%3Ab')
+      ((Get-BranchLink 'https://github.com/gitlab-org/gitlab.git' 'b') -eq 'https://github.com/gitlab-org/gitlab/tree/b')
     Test-Check "(link) mixed-case gitlab host matches" `
-      ((Get-BranchLink 'git@GitLab.example.com:g/p.git' 'b') -eq 'https://GitLab.example.com/g/p/-/merge_requests?scope=all&state=all&source_branch=b')
-    # Unencoded, the & would append a parameter and the # would truncate the URL.
-    Test-Check "(link) branch & and = encoded" `
-      ((Get-BranchLink 'https://github.com/o/r.git' 'x&y=z') -eq 'https://github.com/o/r/pulls?q=is%3Apr+head%3Ax%26y%3Dz')
+      ((Get-BranchLink 'git@GitLab.example.com:g/p.git' 'b') -eq 'https://GitLab.example.com/g/p/-/tree/b')
+    # A ref lands in a path now, so & and = are legal there and must survive;
+    # # would still truncate the URL.
+    Test-Check "(link) branch & and = kept verbatim" `
+      ((Get-BranchLink 'https://github.com/o/r.git' 'x&y=z') -eq 'https://github.com/o/r/tree/x&y=z')
     Test-Check "(link) branch # encoded" `
-      ((Get-BranchLink 'https://github.com/o/r.git' 'x#y') -eq 'https://github.com/o/r/pulls?q=is%3Apr+head%3Ax%23y')
+      ((Get-BranchLink 'https://github.com/o/r.git' 'x#y') -eq 'https://github.com/o/r/tree/x%23y')
+    # The one byte that must NOT be escaped: feat/x is both a real ref and a real
+    # tree path, and %2F is not resolved by either forge.
+    Test-Check "(link) branch slash survives" `
+      ((Get-BranchLink 'https://github.com/o/r.git' 'feat/x') -eq 'https://github.com/o/r/tree/feat/x')
 
     # A self-hosted instance whose host names no forge is unreachable by any guess.
     $env:CC_STATUSLINE_FORGE = 'gitlab'
     try {
         Test-Check "(link) FORGE override wins" `
-          ((Get-BranchLink 'https://10.0.0.1:30001/g/p.git' 'b') -eq 'https://10.0.0.1:30001/g/p/-/merge_requests?scope=all&state=all&source_branch=b')
+          ((Get-BranchLink 'https://10.0.0.1:30001/g/p.git' 'b') -eq 'https://10.0.0.1:30001/g/p/-/tree/b')
     } finally {
         Remove-Item Env:\CC_STATUSLINE_FORGE -ErrorAction SilentlyContinue
     }

@@ -75,6 +75,10 @@ check "contains in/out tokens"         'grep -q "in: 123.4K" <<< "$plain" && gre
 check "contains api wait line"         'grep -q "api wait" <<< "$plain"'
 check "contains cache hit %"           'grep -q "cache 97%" <<< "$plain"'
 check "contains vim NORMAL marker"     'grep -q "NOR" <<< "$plain"'
+check "session id renders on L3"       '[ "$(printf "%s\n" "$plain" | sed -n 3p | grep -c "#test-session-id-xyz")" = 1 ]'
+check "cwd links to file://"           'grep -q "]8;;file:///home/jimmy/projects/conex/jj" <<< "$out"'
+check "L1 carries user:cwd"            'grep -qE "\| [^ :]+:[~/][^ ]* " <<< "$(printf "%s\n" "$plain" | sed -n 1p)"'
+check "account shows email only"       '! grep -qE "👤 [^ ]+ · " <<< "$plain"'
 
 # ── Second pass: with a real transcript that has active agents/tools/todos ──
 echo
@@ -129,29 +133,31 @@ trap 'rm -f "$TRANSCRIPT_TMP"; rm -rf "$REPO_TMP"' EXIT
   git symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
 ) > /dev/null 2>&1
 
-label() {  # $1 = revision to check out; echoes the (…) group from L1
+label() {  # $1 = revision to check out; echoes L1's branch:commit token
   git -C "$REPO_TMP" checkout -q "$1"
   ( cd "$REPO_TMP" && bash "$SCRIPT" < "$SAMPLE" 2>/dev/null ) \
     | sed -E 's/\x1b\[[0-9;]*[a-zA-Z]//g; s/\x1b\]8;;[^\x07]*\x07//g' \
-    | head -1 | grep -oE '\([^)]*\)' | tail -1
+    | head -1 | grep -oP '\x{e0a0} \K[^ |]+'
 }
 
-check "(git) detached at origin ref → ref name" '[ "$(label main~0)" = "(origin/main)" ]'
-check "(git) detached, no origin ref → literal" '[ "$(label decoy~0)" = "(detached)" ]'
-check "(git) on a branch → branch name"         '[ "$(label main)" = "(main)" ]'
+check "(git) detached at origin ref → ref name" '[[ "$(label main~0)" =~ ^origin/main:[0-9a-f]+$ ]]'
+check "(git) detached, no origin ref → literal" '[[ "$(label decoy~0)" =~ ^detached:[0-9a-f]+$ ]]'
+check "(git) on a branch → branch name"         '[[ "$(label main)" =~ ^main:[0-9a-f]+$ ]]'
 
 # ── Fourth pass: CLAUDE_AUTOCOMPACT_PCT_OVERRIDE ───────────────────────────
 # The bar divides by the override'd budget, so a wrong parse is invisible in the
 # label but silently wrong in the %; both are asserted.
 echo
 echo "Running auto-compact percentage override cases…"
-win() {  # $1 = env value, or UNSET; echoes L1's window label + L2's bar %
+win() {  # $1 = env value, or UNSET; echoes L2's window label + bar %
   local out
   if [ "$1" = UNSET ]; then out=$(bash "$SCRIPT" < "$SAMPLE" 2>/dev/null)
   else out=$(CLAUDE_AUTOCOMPACT_PCT_OVERRIDE="$1" bash "$SCRIPT" < "$SAMPLE" 2>/dev/null)
   fi
+  # Both live on L2 now: `<bar> <pct>% <label> | …` — echoed label-first, so the
+  # expected strings below keep reading "<label> <pct>%".
   printf '%s' "$out" | sed -E 's/\x1b\[[0-9;]*[a-zA-Z]//g; s/\x1b\]8;;[^\x07]*\x07//g' \
-    | sed -nE '1s/.*\(M\) ([^|]*) \|.*/\1/p; 2s/.*[● ] ([0-9]+%).*/ \1/p' | tr -d '\n'
+    | sed -nE '2s/^[●◐ ]+ ([0-9]+%) ([^|]*) \|.*/\2 \1/p' | tr -d '\n'
 }
 
 check "(pct) unset → window less reserve"  '[ "$(win UNSET)" = "987K 5%" ]'
@@ -197,34 +203,39 @@ link() {  # $1 = remote URL, $2 = branch; echoes the branch link (last OSC 8)
     | head -1 | grep -oP '\x1b\]8;;\K[^\x07]+' | tail -1
 }
 
-check "(link) scp remote → https PR search" \
-  '[ "$(link git@github.com:o/r.git b)" = "https://github.com/o/r/pulls?q=is%3Apr+head%3Ab" ]'
+check "(link) scp remote → https tree URL" \
+  '[ "$(link git@github.com:o/r.git b)" = "https://github.com/o/r/tree/b" ]'
 # An SSH remote is unbrowsable as given; the user and the SSH port are dropped.
 check "(link) ssh:// remote loses user+port" \
-  '[ "$(link ssh://git@gitlab.example.com:2222/g/p.git b)" = "https://gitlab.example.com/g/p/-/merge_requests?scope=all&state=all&source_branch=b" ]'
+  '[ "$(link ssh://git@gitlab.example.com:2222/g/p.git b)" = "https://gitlab.example.com/g/p/-/tree/b" ]'
 # ...but a port on an https remote is the web UI's own and must survive.
 check "(link) https port survives" \
-  '[ "$(link https://10.0.0.1:30001/g/p.git b)" = "https://10.0.0.1:30001/g/p/pulls?q=is%3Apr+head%3Ab" ]'
+  '[ "$(link https://10.0.0.1:30001/g/p.git b)" = "https://10.0.0.1:30001/g/p/tree/b" ]'
 check "(link) non-git ssh user rewritten" \
-  '[ "$(link deploy@git.example.com:g/p.git b)" = "https://git.example.com/g/p/pulls?q=is%3Apr+head%3Ab" ]'
+  '[ "$(link deploy@git.example.com:g/p.git b)" = "https://git.example.com/g/p/tree/b" ]'
 # The forge guess reads the host only: this repo lives on GitHub.
 check "(link) gitlab in path is not gitlab" \
-  '[ "$(link https://github.com/gitlab-org/gitlab.git b)" = "https://github.com/gitlab-org/gitlab/pulls?q=is%3Apr+head%3Ab" ]'
+  '[ "$(link https://github.com/gitlab-org/gitlab.git b)" = "https://github.com/gitlab-org/gitlab/tree/b" ]'
 # Case-insensitive on purpose — the ps1 mirror's -like cannot be made otherwise.
 check "(link) mixed-case gitlab host matches" \
-  '[ "$(link git@GitLab.example.com:g/p.git b)" = "https://GitLab.example.com/g/p/-/merge_requests?scope=all&state=all&source_branch=b" ]'
+  '[ "$(link git@GitLab.example.com:g/p.git b)" = "https://GitLab.example.com/g/p/-/tree/b" ]'
 # A self-hosted instance whose host names no forge is unreachable by any guess.
 check "(link) FORGE override wins" \
-  '[ "$(export CC_STATUSLINE_FORGE=gitlab; link https://10.0.0.1:30001/g/p.git b)" = "https://10.0.0.1:30001/g/p/-/merge_requests?scope=all&state=all&source_branch=b" ]'
-# Unencoded, the & would append a parameter and the # would truncate the URL.
-check "(link) branch & and = encoded" \
-  '[ "$(link https://github.com/o/r.git "x&y=z")" = "https://github.com/o/r/pulls?q=is%3Apr+head%3Ax%26y%3Dz" ]'
+  '[ "$(export CC_STATUSLINE_FORGE=gitlab; link https://10.0.0.1:30001/g/p.git b)" = "https://10.0.0.1:30001/g/p/-/tree/b" ]'
+# A ref lands in a path now, so `&` and `=` are legal there and must survive;
+# `#` would still truncate the URL.
+check "(link) branch & and = kept verbatim" \
+  '[ "$(link https://github.com/o/r.git "x&y=z")" = "https://github.com/o/r/tree/x&y=z" ]'
 check "(link) branch # encoded" \
-  '[ "$(link https://github.com/o/r.git "x#y")" = "https://github.com/o/r/pulls?q=is%3Apr+head%3Ax%23y" ]'
-# Detached HEAD shows a remote ref or the literal `detached`; neither filters,
-# so only the repo link is left and it is the last OSC 8 on the line.
-check "(link) detached HEAD → repo link only" \
-  '[ "$(link https://github.com/o/r.git b >/dev/null; git -C "$REPO_TMP" checkout -q --detach HEAD; cd "$REPO_TMP" && bash "$SCRIPT" < "$SAMPLE" 2>/dev/null | head -1 | grep -oP '"'"'\x1b\]8;;\K[^\x07]+'"'"' | tail -1)" = "https://github.com/o/r" ]'
+  '[ "$(link https://github.com/o/r.git "x#y")" = "https://github.com/o/r/tree/x%23y" ]'
+# The one byte that must NOT be escaped: `feat/x` is both a real ref and a real
+# tree path, and %2F is not resolved by either forge.
+check "(link) branch slash survives" \
+  '[ "$(link https://github.com/o/r.git "feat/x")" = "https://github.com/o/r/tree/feat/x" ]'
+# Detached HEAD shows a remote ref or the literal `detached`; neither is a branch
+# the forge resolves, so the cwd file:// link is the only OSC 8 left on the line.
+check "(link) detached HEAD → cwd link only" \
+  '[ "$(link https://github.com/o/r.git b >/dev/null; git -C "$REPO_TMP" checkout -q --detach HEAD; cd "$REPO_TMP" && bash "$SCRIPT" < "$SAMPLE" 2>/dev/null | head -1 | grep -oP '"'"'\x1b\]8;;\K[^\x07]+'"'"' | tail -1)" = "file:///home/jimmy/projects/conex/jj" ]'
 
 echo
 echo "Result: $pass passed, $fail failed."

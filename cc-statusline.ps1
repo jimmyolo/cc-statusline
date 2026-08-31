@@ -7,11 +7,10 @@
 #   [x] active   [ ] block currently commented out (paired-disable candidate)
 #
 #   Model              .model.display_name                         -> L1 model badge + Effort default lookup
-#   Dir                .workspace.current_dir                      -> RepoLink basename fallback + Pwd subpath
-#   ProjectDir         .workspace.project_dir                      -> L1 Pwd subpath (cwd relative to project root)
+#   Dir                .workspace.current_dir                      -> L1 cwd (PS1-style, ~-collapsed) + repo hyperlink
 #   Cost               .cost.total_cost_usd                        -> L2 cost + today-cost tracker
 #   Pct                .context_window.used_percentage              -> L2 context bar + % label (fallback only; recomputed vs CtxEff)
-#   CtxSize            .context_window.context_window_size          -> CtxEff -> L1 window label + L2 % denominator
+#   CtxSize            .context_window.context_window_size          -> CtxEff -> L2 window label + % denominator
 #   DurationMs         .cost.total_duration_ms                      -> L3 api wait %  [ ] Dur  [ ] burn rate
 #   LinesAdd/LinesDel  .cost.total_lines_{added,removed}             -> L1 +N -N lines
 #   VimMode            .vim.mode                                    -> L1 NOR / INS
@@ -21,13 +20,13 @@
 #   TotalInTokens/TotalOutTokens .context_window.total_{input,output}_tokens -> L3 in:/out:  [ ] burn rate
 #   ApiDurationMs      .cost.total_api_duration_ms                  -> L3 api wait
 #   CacheRead/CacheCreate/CurInput .context_window.current_usage.*  -> L3 cache hit + L2 % numerator  [ ] cur detail
-#   SessionId          .session_id                                  -> today-cost tracker + last-prompt lookup
+#   SessionId          .session_id                                  -> L3 session id + today-cost tracker + last-prompt lookup
 #   TranscriptPath     .transcript_path                             -> agents / tools / todos widgets
 #
 # Display layout mirrors cc-statusline.sh:
-#   L1: model . ctx-size . repo . branch . lines . git-stats . vim . account
-#   L2: ctx-bar . cost (session + today) . 5h limit . 7d limit
-#   L3: cache-hit . tokens in/out . api wait . session lines . tools
+#   L1: model . user:cwd . branch:commit . git-stats . vim . account
+#   L2: ctx-bar . ctx-size . cost (session + today) . 5h limit . 7d limit
+#   L3: cache-hit . tokens in/out . api wait . session lines . session-id . tools
 #   Agent lines: up to 3 most recent subagent dispatches, one per line
 #   L4: todos . last prompt (conditionally printed)
 # =============================================================================
@@ -150,8 +149,12 @@ $CacheRead = $Json.context_window.current_usage.cache_read_input_tokens      # +
 $CacheCreate = $Json.context_window.current_usage.cache_creation_input_tokens # + L2 % numerator (shared)
 $CurInput = $Json.context_window.current_usage.input_tokens                  # + L2 % numerator (shared)
 $SessionId = $Json.session_id
+# Branch glyph (U+E0A0, Powerline) — same one ~/.bashrc's PS1 uses.
+$GitGlyph = [char]0xE0A0
+
+# Shell user, as bash PS1's \u shows it.
+$UserName = if ($env:USER) { $env:USER } elseif ($env:USERNAME) { $env:USERNAME } else { '' }
 $TranscriptPath = $Json.transcript_path
-$ProjectDir = $Json.workspace.project_dir
 
 # ── Effort / thinking level (from settings.json) ──────────────
 $SettingsPath = "$HOME/.claude/settings.json"
@@ -433,7 +436,6 @@ if ($IsGit) {
     if (-not $Branch) { $Branch = 'detached' }
 }
 
-$RepoLink = Split-Path -Leaf $Dir
 $BranchLink = $Branch
 $Remote = (& git remote get-url origin 2>$null)
 if ($Remote) {
@@ -451,12 +453,11 @@ if ($Remote) {
         $Remote = $Remote -replace '^(?:[^@/]+@)?([^:/]+):', 'https://$1/'
     }
     $Remote = $Remote -replace '\.git$', ''
-    $RepoName = Split-Path -Leaf $Remote
-    $RepoLink = "$Esc]8;;$Remote$Bel$RepoName$Esc]8;;$Bel"
-    # Branch name links to its own merge requests, filtered by source branch —
-    # the number is not knowable without an API call. Only a checked-out local
-    # branch gets one: the detached-HEAD fallback above yields a remote ref or
-    # the literal 'detached', neither of which filters.
+    # Branch name links to the branch's own tree on the forge — opening it both
+    # shows the code at that ref and switches the forge's branch selector to it.
+    # Only a checked-out local branch gets one: the detached-HEAD fallback above
+    # yields a remote ref or the literal 'detached', neither of which is a
+    # branch the forge would resolve.
     if ($OnBranch) {
         # Forge shape is guessed from the host alone — matching the path too
         # would read github.com/gitlab-org/gitlab as GitLab. A self-hosted
@@ -467,33 +468,41 @@ if ($Remote) {
             $RHost = ($Remote -replace '^https://', '') -replace '/.*$', ''
             if ($RHost -like '*gitlab*') { $Forge = 'gitlab' } else { $Forge = 'github' }
         }
-        # Every byte git allows in a ref that also means something in a query
-        # string. Unencoded, '&' appends a parameter and '#' truncates the URL.
-        # '%' goes first, or it would re-encode the escapes added after it.
-        $BEnc = $Branch -replace '%', '%25' -replace '&', '%26' -replace '#', '%23' `
-                        -replace '\+', '%2B' -replace ';', '%3B' -replace '=', '%3D' `
+        # The ref lands in a URL *path*, where '/' is the one byte that must
+        # survive verbatim ('feat/x' is a real branch and a real tree path).
+        # Only the bytes git allows in a ref that would break the path are
+        # escaped: '%' (an escape itself, so it goes first), '#' (truncates the
+        # URL), '?' (starts a query string) and a space (legal in no URL).
+        $BEnc = $Branch -replace '%', '%25' -replace '#', '%23' `
                         -replace '\?', '%3F' -replace ' ', '%20'
         if ($Forge -eq 'gitlab') {
-            $MrUrl = "$Remote/-/merge_requests?scope=all&state=all&source_branch=$BEnc"
+            $TreeUrl = "$Remote/-/tree/$BEnc"
         } else {
-            $MrUrl = "$Remote/pulls?q=is%3Apr+head%3A$BEnc"
+            $TreeUrl = "$Remote/tree/$BEnc"
         }
-        $BranchLink = "$Esc]8;;$MrUrl$Bel$Branch$Esc]8;;$Bel"
+        $BranchLink = "$Esc]8;;$TreeUrl$Bel$Branch$Esc]8;;$Bel"
     }
 }
 
-# Pwd subpath: show cwd relative to project root when inside a subdirectory.
-# project_dir is supplied by the harness; fall back to git toplevel if absent.
-$PwdSubpath = ''
-$Proj = $ProjectDir
-if (-not $Proj) {
-    $toplevel = (& git rev-parse --show-toplevel 2>$null)
-    if ($LASTEXITCODE -eq 0) { $Proj = $toplevel }
-}
-if ($Proj -and $Dir -and ($Dir -ne $Proj)) {
-    if ($Dir.StartsWith("$Proj/") -or $Dir.StartsWith("$Proj\")) {
-        $PwdSubpath = $Dir.Substring($Proj.Length + 1)
+# Working directory, PS1-style: the whole path, $HOME collapsed to ~ for display
+# while the link keeps the absolute one. A 'file://' target opens the directory
+# in the desktop file manager, which is what a path is wanted for; the forge page
+# is one click further along the branch name.
+$PwdDisp = $Dir
+if ($HOME -and $PwdDisp) {
+    if ($PwdDisp -eq $HOME) { $PwdDisp = '~' }
+    elseif ($PwdDisp.StartsWith("$HOME/") -or $PwdDisp.StartsWith("$HOME\")) {
+        $PwdDisp = '~' + $PwdDisp.Substring($HOME.Length)
     }
+}
+$PwdLink = $PwdDisp
+if ($Dir) {
+    # Same escape rule as the ref above. Windows paths are backslash-separated
+    # and start at a drive letter, which file:// spells with three slashes.
+    $DEnc = ($Dir -replace '\\', '/') -replace '%', '%25' -replace '#', '%23' `
+                                     -replace '\?', '%3F' -replace ' ', '%20'
+    $FileUrl = if ($DEnc.StartsWith('/')) { "file://$DEnc" } else { "file:///$DEnc" }
+    $PwdLink = "$Esc]8;;$FileUrl$Bel$PwdDisp$Esc]8;;$Bel"
 }
 
 # ── Context bar ───────────────────────────────────────────────
@@ -540,52 +549,44 @@ if ($CacheRead -and $CurInput -and $CurInput -ne 0) {
 }
 
 # ── Login account (from ~/.claude.json) ───────────────────────
+# Display: redacted email only (local part masked to first char) — displayName
+# is dropped, the email already identifies the account.
 $Account = ''
 $ClaudeJsonPath = "$HOME/.claude.json"
-$AcctName = ''
 $AcctEmail = ''
 if (Test-Path $ClaudeJsonPath) {
     try {
         $cj = Get-Content $ClaudeJsonPath -Raw | ConvertFrom-Json
-        $AcctName = $cj.oauthAccount.displayName
         $AcctEmail = $cj.oauthAccount.emailAddress
     } catch {}
 }
-$AcctRedacted = ''
 if ($AcctEmail) {
     $localPart = $AcctEmail.Split('@')[0]
     $domainPart = $AcctEmail.Substring($localPart.Length + 1)
     $AcctRedacted = "$($localPart.Substring(0, 1))***@$domainPart"
-}
-if ($AcctName -and $AcctRedacted) {
-    $Account = "`u{1F464} ${AcctName} ${Dim}$([char]0x00B7)${Reset} ${Dim}${AcctRedacted}${Reset}"
-} elseif ($AcctName) {
-    $Account = "`u{1F464} ${AcctName}"
-} elseif ($AcctRedacted) {
     $Account = "`u{1F464} ${Dim}${AcctRedacted}${Reset}"
 }
 
 # ══════════════════════════════════════════════════════════════
-# LINE 1: Model + Context size + Repo + Branch + Lines + Files + Vim + Account
+# LINE 1: Model + user:cwd + branch:commit + git stats + Vim + Account
 # ══════════════════════════════════════════════════════════════
 $L1 = "${Cyan}${Bold}${ModelDisp}${Reset}"
-if ($CtxLabel) { $L1 += " $CtxLabel" }
-$L1 += "${Sep}${White}${RepoLink}${Reset}"
-if ($PwdSubpath) { $L1 += "${Dim}/${PwdSubpath}${Reset}" }
 
-# Consolidated git block: (branch* M A D +N -N) — suppress zero categories
+# Project state, mirroring the shell prompt: user:cwd  branch:commit (M A D +N -N)
+$L1 += "${Sep}${Magenta}${Bold}${UserName}${Reset}${Dim}:${Reset}${Bold}${Green}${PwdLink}${Reset}"
 if ($Branch) {
-    $BranchParts = $BranchLink
-    if ($GitM -gt 0 -or $GitA -gt 0 -or $GitD -gt 0) { $BranchParts += '*' }
-    if ($GitM -gt 0) { $BranchParts += " ${Yellow}${GitM}M${Reset}${Dim}" }
-    if ($GitA -gt 0) { $BranchParts += " ${Green}${GitA}A${Reset}${Dim}" }
-    if ($GitD -gt 0) { $BranchParts += " ${Red}${GitD}D${Reset}${Dim}" }
-    if ($GitLinesAdd -gt 0) { $BranchParts += " ${Green}+${GitLinesAdd}${Reset}${Dim}" }
-    if ($GitLinesDel -gt 0) { $BranchParts += " ${Red}-${GitLinesDel}${Reset}${Dim}" }
-    $L1 += " ${Dim}(${BranchParts})${Reset}"
+    $L1 += " ${White}${GitGlyph}${Reset} ${White}${BranchLink}${Reset}"
+    if ($GitCommit) { $L1 += "${Dim}:${Reset}${Magenta}${GitCommit}${Reset}" }
 }
 
-if ($GitCommit) { $L1 += " ${Dim}@${Reset}${Magenta}${GitCommit}${Reset}" }
+# Working-tree stats — suppress zero categories, drop the whole group when clean.
+$GitStats = ''
+if ($GitM -gt 0) { $GitStats += " ${Yellow}${GitM}M${Reset}${Dim}" }
+if ($GitA -gt 0) { $GitStats += " ${Green}${GitA}A${Reset}${Dim}" }
+if ($GitD -gt 0) { $GitStats += " ${Red}${GitD}D${Reset}${Dim}" }
+if ($GitLinesAdd -gt 0) { $GitStats += " ${Green}+${GitLinesAdd}${Reset}${Dim}" }
+if ($GitLinesDel -gt 0) { $GitStats += " ${Red}-${GitLinesDel}${Reset}${Dim}" }
+if ($GitStats) { $L1 += " ${Dim}($($GitStats.Substring(1)))${Reset}" }
 
 if ($VimMode) {
     if ($VimMode -eq 'NORMAL') { $L1 += "${Sep}${Blue}${Bold}NOR${Reset}" }
@@ -595,11 +596,13 @@ if ($VimMode) {
 if ($Account) { $L1 += "${Sep}${Account}" }
 
 # ══════════════════════════════════════════════════════════════
-# LINE 2: Context bar + Cost + Rate limits (5h & 7d with countdown)
+# LINE 2: Context bar + Window label + Cost + Rate limits (5h & 7d with countdown)
 # ══════════════════════════════════════════════════════════════
 $CostFmt = '$' + ('{0:F2}' -f [double]$Cost)
 $TodayFmt = '$' + ('{0:F2}' -f [double]$TodayCost)
-$L2 = "$Bar ${Dim}${Pct}%${Reset}${Sep}${Yellow}${CostFmt}${Reset} ${Dim}(today ${TodayFmt})${Reset}"
+$L2 = "$Bar ${Dim}${Pct}%${Reset}"
+if ($CtxLabel) { $L2 += " $CtxLabel" }
+$L2 += "${Sep}${Yellow}${CostFmt}${Reset} ${Dim}(today ${TodayFmt})${Reset}"
 
 if ($Rate5h) {
     $R5Int = [math]::Round([double]$Rate5h, [MidpointRounding]::AwayFromZero)
@@ -654,6 +657,9 @@ if ($LinesDel) {
     if ($SessionLinesPart) { $SessionLinesPart = "${SessionLinesPart} ${Red}-${LinesDel}${Reset}" } else { $SessionLinesPart = "${Red}-${LinesDel}${Reset}" }
 }
 if ($SessionLinesPart) { $L3 += "${Sep}${SessionLinesPart} ${Dim}lines${Reset}" }
+
+# Session id, in full — copyable for --resume and for session messaging.
+if ($SessionId) { $L3 += "${Sep}${Dim}#${SessionId}${Reset}" }
 
 if ($RunningToolCount -gt 0) { $L3 += "${Sep}${Dim}tools${Reset} ${Yellow}${RunningTools}${Reset}" }
 

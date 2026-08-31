@@ -10,10 +10,10 @@ Two equivalent implementations, pick whichever fits your platform:
 ## Sample output
 
 ```
-Opus 4.7 (1M context) (H) 1M v1.2.3 | repo (main) | +42 -7 lines | 3A | NOR
-●●●◐●●●●●● 35% | $1.23 (today $5.67) | 5h 23% (2h 14m) | 7d 57% (5d 8h)
-cache 97% | in: 123.4K out: 7.8K | api wait 30m 00s (50%) | agents 2 reviewer-opus-high,coder-sonnet-max
-tools Read,Bash | todos 3/7 fix smoke test | 14:23 ❯ update README sample output
+Opus 4.7 (1M context) (H) | jimmy:~/Projects/ajent  main:f97c9bf (5M 1A +16 -8) | NOR | 👤 v***@gmail.com
+●●●◐●●●●●● 35% 987K | $1.23 (today $5.67) | 5h 23% (2h 14m) | 7d 57% (5d 8h)
+cache 97% | in: 123.4K out: 7.8K | api wait 30m 00s (50%) | +42 -7 lines | #4f1c8e02-… | tools Read,Bash
+todos 3/7 fix smoke test | 14:23 ❯ update README sample output
 ```
 
 L3 groups "session-wide consumption" (cache, tokens, api wait) plus the active subagent indicator. L4 groups "live activity & user intent" (currently running tools, todo progress, last prompt). Both lines render conditionally — empty fields drop out.
@@ -83,10 +83,10 @@ Both scripts read the same 22 fields from the JSON Claude Code pipes to `statusL
 | Field | JSON path | Displayed in |
 |---|---|---|
 | `MODEL` | `.model.display_name` | L1 model badge |
-| `DIR` | `.workspace.current_dir` | Repo-link basename fallback |
+| `DIR` | `.workspace.current_dir` | L1 cwd (`~`-collapsed) + repo hyperlink |
 | `COST` | `.cost.total_cost_usd` | L2 cost + today tracker |
 | `PCT` | `.context_window.used_percentage` | L2 context bar (fallback only — recomputed against `CTX_EFF`) |
-| `CTX_SIZE` | `.context_window.context_window_size` | `CTX_EFF` → L1 window label + L2 `%` denominator |
+| `CTX_SIZE` | `.context_window.context_window_size` | `CTX_EFF` → L2 window label + `%` denominator |
 | `DURATION_MS` | `.cost.total_duration_ms` | L3 api-wait %, plus disabled blocks |
 | `LINES_ADD` / `LINES_DEL` | `.cost.total_lines_{added,removed}` | L1 `+N -N lines` |
 | `VIM_MODE` | `.vim.mode` | L1 NOR / INS |
@@ -96,7 +96,7 @@ Both scripts read the same 22 fields from the JSON Claude Code pipes to `statusL
 | `TOTAL_IN_TOKENS` / `TOTAL_OUT_TOKENS` | `.context_window.total_{input,output}_tokens` | L3 `in:` / `out:` |
 | `API_DURATION_MS` | `.cost.total_api_duration_ms` | L3 api wait |
 | `CACHE_READ` / `CACHE_CREATE` / `CUR_INPUT` | `.context_window.current_usage.*` | L3 cache hit (cur detail disabled by default) + L2 `%` numerator |
-| `SESSION_ID` | `.session_id` | Today-cost tracker + last-prompt lookup |
+| `SESSION_ID` | `.session_id` | L3 session id + today-cost tracker + last-prompt lookup |
 | `TRANSCRIPT_PATH` | `.transcript_path` | L3 agents · L4 tools · todos |
 
 The full mapping (with paired-disable annotations) lives at the top of [`cc-statusline.sh`](cc-statusline.sh).
@@ -105,33 +105,45 @@ The full mapping (with paired-disable annotations) lives at the top of [`cc-stat
 
 | Line | Contents |
 |---|---|
-| L1 | model · ctx-size · version · repo-link · branch · lines · git-stats · vim |
-| L2 | context-bar · cost (session + today) · 5h limit · 7d limit |
-| L3 | cache-hit · tokens in/out · api wait · agents (magenta=running, dim=last seen) |
+| L1 | model · `user:cwd` · `branch:commit` · git-stats · vim · account (redacted email) |
+| L2 | context-bar · window label · cost (session + today) · 5h limit · 7d limit |
+| L3 | cache-hit · tokens in/out · api wait · session lines · session id · running tools |
 | L4 | running tools · todos (with current task) · last prompt (with `❯` marker) — entire line conditionally rendered |
+
+### Project state
+
+L1's middle field mirrors the shell prompt — `user:cwd  branch:commit (M A D +N -N)`, same colors and the same U+E0A0 branch glyph a Powerline-style `PS1` uses — so it reads as the prompt already being scanned rather than as a second, differently-shaped one. The path is the full `~`-collapsed cwd, not a repo basename plus a subpath. The parenthesised group is live working-tree state (modified / added / deleted files, then staged+unstaged line diff); it drops out entirely on a clean tree. Session-cumulative `+N -N lines` from the cost JSON is a separate field on L3.
+
+### Session id
+
+The full session id renders dim on L3, unabbreviated so it can be copied straight into `claude --resume <id>` or used to address the session when messaging it.
 
 ### L1 hyperlinks
 
-Two OSC 8 links on L1, both derived from `origin` — no API call, no extra process:
+Two OSC 8 links on L1 — no API call, no extra process:
 
 | Text | Opens |
 |---|---|
-| repo name | the repository page |
-| branch name | that branch's pull/merge requests, filtered by source branch |
+| cwd path | `file://<absolute cwd>` — the directory in the desktop file manager |
+| branch name | that branch's tree on the forge, which also switches the forge's branch selector to it |
 
-An SSH remote is not browsable, so both links are built from the web URL of the same repository — the SSH user and the `ssh://` port are dropped, while a port on an `https` remote is kept, since a self-hosted forge often serves its UI there.
+The cwd link keeps the absolute path even though the text shows it `~`-collapsed, and needs no remote — it works in a directory that is not a repository at all.
 
-The URL shapes follow the forge, guessed from the **host** alone (matching the path too would read `github.com/gitlab-org/gitlab` as GitLab): a host containing `gitlab`, in any case, gets `/-/merge_requests?source_branch=…`; everything else gets `/pulls?q=head:…`. A self-hosted instance whose host names no forge — an IP, a bare hostname — is beyond any guess:
+The branch link is derived from `origin`. An SSH remote is not browsable, so it is rewritten to the web URL of the same repository — the SSH user and the `ssh://` port are dropped, while a port on an `https` remote is kept, since a self-hosted forge often serves its UI there.
+
+The URL shape follows the forge, guessed from the **host** alone (matching the path too would read `github.com/gitlab-org/gitlab` as GitLab): a host containing `gitlab`, in any case, gets `/-/tree/<branch>`; everything else gets `/tree/<branch>`. A self-hosted instance whose host names no forge — an IP, a bare hostname — is beyond any guess:
 
 ```sh
 export CC_STATUSLINE_FORGE=gitlab   # or github; overrides the host guess
 ```
 
-The branch link is omitted on a detached HEAD, where the displayed name is a remote ref or the literal `detached` and would filter nothing.
+The branch link is omitted on a detached HEAD, where the displayed name is a remote ref or the literal `detached` — neither is a branch the forge resolves.
+
+Both targets land in a URL *path*, so only the bytes that would break one are escaped: `%`, `#`, `?` and a space. `/` is deliberately left alone — `feat/x` is both a real ref and a real tree path, and `%2F` is resolved by neither forge.
 
 ### Context bar denominator
 
-The context bar and its `%` are **not** the `used_percentage` Claude Code sends on stdin. That field divides current usage by the *raw* model window (1,000,000 for `[1m]` models) and ignores `CLAUDE_CODE_AUTO_COMPACT_WINDOW`, while auto-compact measures against a window that *does* honour it — so with the env var set the bar could read ~17% at the moment compaction fires. Both scripts instead recompute the window as `min(context_window_size, CLAUDE_CODE_AUTO_COMPACT_WINDOW)`, then derive the budget from it as described below, and the L1 window label shows that budget. The displayed `%` divides by that budget instead, so it reads at or above stdin's `used_percentage` — the two often round to the same integer at low usage and diverge as the session fills, which is the point: the bar measures against where compaction actually fires.
+The context bar and its `%` are **not** the `used_percentage` Claude Code sends on stdin. That field divides current usage by the *raw* model window (1,000,000 for `[1m]` models) and ignores `CLAUDE_CODE_AUTO_COMPACT_WINDOW`, while auto-compact measures against a window that *does* honour it — so with the env var set the bar could read ~17% at the moment compaction fires. Both scripts instead recompute the window as `min(context_window_size, CLAUDE_CODE_AUTO_COMPACT_WINDOW)`, then derive the budget from it as described below, and the L2 window label shows that budget. The displayed `%` divides by that budget instead, so it reads at or above stdin's `used_percentage` — the two often round to the same integer at low usage and diverge as the session fills, which is the point: the bar measures against where compaction actually fires.
 
 Auto-compact does not wait for the window to fill: the CLI holds back a fixed **13,000-token reserve** and triggers there, whether or not any override is set. Both scripts reproduce the whole rule (CLI 2.1.227, `RIo()`):
 
@@ -144,7 +156,7 @@ So a 1M window shows a `987K` budget by default, and a 200K window shows `187K`.
 
 Because that constant lives inside the CLI, a release can move it. Re-check `RIo()` if the bar starts disagreeing with when compaction actually fires.
 
-`CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` only tightens the trigger further, and whichever arm of the `min()` is lower wins: on a 1M window `pct=98` binds at `980K`, while `pct=99` and `pct=100` both land on the `987K` reserve. When the variable is set the L1 label carries both numbers — `500K (1M·50%)` — with the budget first, because that is what the bar's `%` divides by; the percentage is echoed normalised, so `33.30` renders as `33.3`. Unset, there is no percentage to echo and the label stays plain.
+`CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` only tightens the trigger further, and whichever arm of the `min()` is lower wins: on a 1M window `pct=98` binds at `980K`, while `pct=99` and `pct=100` both land on the `987K` reserve. When the variable is set the L2 label carries both numbers — `500K (1M·50%)` — with the budget first, because that is what the bar's `%` divides by; the percentage is echoed normalised, so `33.30` renders as `33.3`. Unset, there is no percentage to echo and the label stays plain.
 
 The accepted form follows the CLI's `parseFloat`: a numeric *prefix*, so leading blanks, a leading `+`, a leading `.` and a trailing non-numeric tail are all tolerated (`50abc` is 50%). Exponent notation is the one exception — honouring only its mantissa would silently pick a wrong budget, so `1e2` is rejected rather than read as 1%. Six fractional digits are kept and the rest truncated. Anything landing outside `0 < pct ≤ 100` after that, and any value small enough to truncate the budget to zero tokens, is ignored and the label falls back to the plain window. (The CLI instead takes that zero literally and compacts immediately; a zero budget is not something a bar can divide by, so the scripts diverge here on purpose.)
 
