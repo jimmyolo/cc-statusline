@@ -120,16 +120,24 @@ The full session id renders dim on L3, unabbreviated so it can be copied straigh
 
 ### L1 hyperlinks
 
-Two OSC 8 links on L1 — no API call, no extra process:
+Two OSC 8 links on L1 — no API call, and one local ref lookup for the branch link:
 
 | Text | Opens |
 |---|---|
-| cwd path | `file://<absolute cwd>` — the directory in the desktop file manager |
-| branch name | that branch's tree on the forge, which also switches the forge's branch selector to it |
+| cwd path | `file://<absolute path>` — the directory in the desktop file manager (the main checkout's, in a worktree) |
+| branch name | that branch's tree on the forge — **or**, inside a linked worktree, `file://` that worktree's own directory |
 
 The cwd link keeps the absolute path even though the text shows it `~`-collapsed, and needs no remote — it works in a directory that is not a repository at all.
 
 The branch link is derived from `origin`. An SSH remote is not browsable, so it is rewritten to the web URL of the same repository — the SSH user and the `ssh://` port are dropped, while a port on an `https` remote is kept, since a self-hosted forge often serves its UI there.
+
+The SSH port says nothing about which port serves the web UI, and a self-hosted forge often puts them on different ones (`ssh://git@host:30023/…` answering at `https://host:30001/…`). Only the user knows, so:
+
+```sh
+export CC_STATUSLINE_WEB_PORT=30001   # appended to the host of an SSH remote
+```
+
+An `https` remote already carries its own port and is left alone. The value is spliced into a link target, so a non-numeric one is ignored rather than trusted.
 
 The URL shape follows the forge, guessed from the **host** alone (matching the path too would read `github.com/gitlab-org/gitlab` as GitLab): a host containing `gitlab`, in any case, gets `/-/tree/<branch>`; everything else gets `/tree/<branch>`. A self-hosted instance whose host names no forge — an IP, a bare hostname — is beyond any guess:
 
@@ -137,7 +145,9 @@ The URL shape follows the forge, guessed from the **host** alone (matching the p
 export CC_STATUSLINE_FORGE=gitlab   # or github; overrides the host guess
 ```
 
-Inside a worktree the branch link is the only way left to reach the checkout actually being worked in, since the path names the main one — so it takes the worktree's directory and the forge link steps aside. The branch link is omitted on a detached HEAD, where the displayed name is a remote ref or the literal `detached` — neither is a branch the forge resolves.
+Inside a worktree the branch link is the only way left to reach the checkout actually being worked in, since the path names the main one — so it takes the worktree's directory and the forge link steps aside.
+
+Outside one, the forge link is omitted where it would resolve to nothing: on a detached HEAD, whose displayed name is a remote ref or the literal `detached`, and on a branch with no `refs/remotes/origin/<branch>` — a throwaway worktree's local branch being the usual one, though that case now takes the `file://` link above instead. Pushing the branch creates that ref, and the link appears; a `clone --single-branch`, whose refspec never fetches other branches, is the case where a pushed branch still has no link.
 
 Both targets land in a URL *path*, so only the bytes that would break one are escaped: `%`, `#`, `?` and a space. `/` is deliberately left alone — `feat/x` is both a real ref and a real tree path, and `%2F` is resolved by neither forge.
 

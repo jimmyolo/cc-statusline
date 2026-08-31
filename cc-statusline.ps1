@@ -465,10 +465,23 @@ if ($Remote) {
     #   ssh://git@host:2222/grp/repo.git -> https://host/grp/repo
     #   deploy@host:grp/repo.git         -> https://host/grp/repo
     #   https://host:30001/grp/repo.git  -> https://host:30001/grp/repo
+    #
+    # The SSH port says nothing about which port serves the web UI, and a
+    # self-hosted forge often puts them on different ones. Only the user
+    # knows: CC_STATUSLINE_WEB_PORT is appended to the host of an SSH-derived
+    # URL, and left alone on an https remote, which carries its own port.
+    #
+    #   CC_STATUSLINE_WEB_PORT=30001
+    #   ssh://git@host:30023/grp/repo.git -> https://host:30001/grp/repo
+    # Digits only: the value lands in the target of a clickable link, where a
+    # stray '/' or '@' would send it to another host entirely — and in a .NET
+    # replacement string, where a '$' would re-expand the captured host.
+    # [0-9] and not \d, which .NET reads as any Unicode digit.
+    $WebPort = if ($env:CC_STATUSLINE_WEB_PORT -match '^[0-9]+$') { ":$($env:CC_STATUSLINE_WEB_PORT)" } else { '' }
     if ($Remote -like 'ssh://*') {
-        $Remote = $Remote -replace '^ssh://(?:[^@/]+@)?([^:/]+)(?::\d+)?/', 'https://$1/'
+        $Remote = $Remote -replace '^ssh://(?:[^@/]+@)?([^:/]+)(?::\d+)?/', "https://`$1$WebPort/"
     } elseif ($Remote -notlike '*://*') {
-        $Remote = $Remote -replace '^(?:[^@/]+@)?([^:/]+):', 'https://$1/'
+        $Remote = $Remote -replace '^(?:[^@/]+@)?([^:/]+):', "https://`$1$WebPort/"
     }
     $Remote = $Remote -replace '\.git$', ''
     # Branch name links to the branch's own tree on the forge — opening it both
@@ -476,7 +489,15 @@ if ($Remote) {
     # Only a checked-out local branch gets one: the detached-HEAD fallback above
     # yields a remote ref or the literal 'detached', neither of which is a
     # branch the forge would resolve.
+    #
+    # A branch the remote has never seen has no tree there either, so the link
+    # is built only once refs/remotes/origin/<branch> exists.
+    $OnRemote = $false
     if ($OnBranch) {
+        & git show-ref --verify --quiet "refs/remotes/origin/$Branch" 2>$null
+        $OnRemote = ($LASTEXITCODE -eq 0)
+    }
+    if ($OnRemote) {
         # Forge shape is guessed from the host alone — matching the path too
         # would read github.com/gitlab-org/gitlab as GitLab. A self-hosted
         # instance often names no forge at all (an IP, a bare hostname), which

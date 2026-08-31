@@ -22,6 +22,7 @@ $PwshExe = Join-Path $PSHOME $PwshExeName
 Remove-Item Env:\CLAUDE_AUTOCOMPACT_PCT_OVERRIDE -ErrorAction SilentlyContinue
 Remove-Item Env:\CLAUDE_CODE_AUTO_COMPACT_WINDOW -ErrorAction SilentlyContinue
 Remove-Item Env:\CC_STATUSLINE_FORGE -ErrorAction SilentlyContinue
+Remove-Item Env:\CC_STATUSLINE_WEB_PORT -ErrorAction SilentlyContinue
 
 $Pass = 0
 $Fail = 0
@@ -197,14 +198,23 @@ try {
     Pop-Location
 
     function Get-BranchLink {   # $Remote, $BranchName -> the last OSC 8 target
-        param([string]$Remote, [string]$BranchName)
+        param([string]$Remote, [string]$BranchName, [switch]$Unpushed)
         Push-Location $RepoTmp
         git remote set-url origin $Remote 2>&1 | Out-Null
         git checkout -q -B $BranchName main 2>&1 | Out-Null
+        # The branch link is built only for a branch the remote has, so the
+        # scratch repo has to look pushed unless a case asks otherwise.
+        if ($Unpushed) {
+            git update-ref -d "refs/remotes/origin/$BranchName" 2>&1 | Out-Null
+        } else {
+            git update-ref "refs/remotes/origin/$BranchName" HEAD 2>&1 | Out-Null
+        }
         $raw = Get-Content -Raw $Sample | & $PwshExe -NoProfile -File $Script
         Pop-Location
         $line = ($raw -join "`n") -split "`n" | Select-Object -First 1
-        $m = [regex]::Matches($line, "`e\]8;;([^`a]*)`a")
+        # The capture is + and not *: every OSC 8 link is closed by a bare
+        # terminator whose target is empty, and * would match that instead.
+        $m = [regex]::Matches($line, "`e\]8;;([^`a]+)`a")
         if ($m.Count -eq 0) { return '' }
         return $m[$m.Count - 1].Groups[1].Value
     }
@@ -239,6 +249,11 @@ try {
 
     Test-Check "(link) scp remote -> https tree URL" `
       ((Get-BranchLink 'git@github.com:o/r.git' 'b') -eq 'https://github.com/o/r/tree/b')
+    # A branch the remote never saw has no tree there — a throwaway worktree's
+    # local branch is the usual one. The cwd link is then the only one left.
+    Test-Check "(link) unpushed branch -> cwd link only" `
+      ((Get-BranchLink 'https://github.com/o/r.git' 'wt-scratch' -Unpushed) -eq 'file:///home/jimmy/projects/conex/jj')
+
     # An SSH remote is unbrowsable as given; the user and the SSH port are dropped.
     Test-Check "(link) ssh:// remote loses user+port" `
       ((Get-BranchLink 'ssh://git@gitlab.example.com:2222/g/p.git' 'b') -eq 'https://gitlab.example.com/g/p/-/tree/b')
@@ -262,6 +277,25 @@ try {
     # tree path, and %2F is not resolved by either forge.
     Test-Check "(link) branch slash survives" `
       ((Get-BranchLink 'https://github.com/o/r.git' 'feat/x') -eq 'https://github.com/o/r/tree/feat/x')
+
+    # The SSH port is not the web port; only the user knows which serves the UI.
+    $env:CC_STATUSLINE_WEB_PORT = '30001'
+    try {
+        Test-Check "(link) WEB_PORT added to ssh:// remote" `
+          ((Get-BranchLink 'ssh://git@10.0.0.1:30023/g/p.git' 'b') -eq 'https://10.0.0.1:30001/g/p/tree/b')
+        Test-Check "(link) WEB_PORT added to scp remote" `
+          ((Get-BranchLink 'git@10.0.0.1:g/p.git' 'b') -eq 'https://10.0.0.1:30001/g/p/tree/b')
+        # An https remote already carries the web port; don't double it.
+        Test-Check "(link) WEB_PORT leaves https remote alone" `
+          ((Get-BranchLink 'https://10.0.0.1:8080/g/p.git' 'b') -eq 'https://10.0.0.1:8080/g/p/tree/b')
+        # The value is spliced into a link target, so anything but digits is
+        # ignored — '443/@evil.example.com' would point the link elsewhere.
+        $env:CC_STATUSLINE_WEB_PORT = '443/@evil.example.com'
+        Test-Check "(link) non-numeric WEB_PORT ignored" `
+          ((Get-BranchLink 'git@10.0.0.1:g/p.git' 'b') -eq 'https://10.0.0.1/g/p/tree/b')
+    } finally {
+        Remove-Item Env:\CC_STATUSLINE_WEB_PORT -ErrorAction SilentlyContinue
+    }
 
     # A self-hosted instance whose host names no forge is unreachable by any guess.
     $env:CC_STATUSLINE_FORGE = 'gitlab'

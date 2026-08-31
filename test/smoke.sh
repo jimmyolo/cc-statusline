@@ -16,7 +16,7 @@ SAMPLE="$SCRIPT_DIR/sample.json"
 # — a suite run inside a session inherits them without any shell doing it.
 unset CLAUDE_AUTOCOMPACT_PCT_OVERRIDE
 unset CLAUDE_CODE_AUTO_COMPACT_WINDOW
-unset CC_STATUSLINE_FORGE
+unset CC_STATUSLINE_FORGE CC_STATUSLINE_WEB_PORT
 
 fail=0
 pass=0
@@ -218,6 +218,9 @@ link() {  # $1 = remote URL, $2 = branch; echoes the branch link (last OSC 8)
   git -C "$REPO_TMP" remote remove origin 2>/dev/null
   git -C "$REPO_TMP" remote add origin "$1"
   git -C "$REPO_TMP" checkout -q -B "$2" main
+  # The branch link is built only for a branch the remote has, so the scratch
+  # repo has to look pushed. `link_local` below is the unpushed counterpart.
+  git -C "$REPO_TMP" update-ref "refs/remotes/origin/$2" HEAD
   ( cd "$REPO_TMP" && bash "$SCRIPT" < "$SAMPLE" 2>/dev/null ) \
     | head -1 | grep -oP '\x1b\]8;;\K[^\x07]+' | tail -1
 }
@@ -245,6 +248,30 @@ check "(link) FORGE override wins" \
 # `#` would still truncate the URL.
 check "(link) branch & and = kept verbatim" \
   '[ "$(link https://github.com/o/r.git "x&y=z")" = "https://github.com/o/r/tree/x&y=z" ]'
+# The SSH port is not the web port; only the user knows which one serves the UI.
+check "(link) WEB_PORT added to ssh:// remote" \
+  '[ "$(export CC_STATUSLINE_WEB_PORT=30001; link ssh://git@10.0.0.1:30023/g/p.git b)" = "https://10.0.0.1:30001/g/p/tree/b" ]'
+check "(link) WEB_PORT added to scp remote" \
+  '[ "$(export CC_STATUSLINE_WEB_PORT=30001; link git@10.0.0.1:g/p.git b)" = "https://10.0.0.1:30001/g/p/tree/b" ]'
+# An https remote already carries the web port; the override must not double it.
+check "(link) WEB_PORT leaves https remote alone" \
+  '[ "$(export CC_STATUSLINE_WEB_PORT=30001; link https://10.0.0.1:8080/g/p.git b)" = "https://10.0.0.1:8080/g/p/tree/b" ]'
+# The value is spliced into a link target, so anything but digits is ignored —
+# `443/@evil.example.com` would otherwise point the link at another host.
+check "(link) non-numeric WEB_PORT ignored" \
+  '[ "$(export CC_STATUSLINE_WEB_PORT=443/@evil.example.com; link git@10.0.0.1:g/p.git b)" = "https://10.0.0.1/g/p/tree/b" ]'
+# A branch the remote never saw has no tree there — a throwaway worktree's local
+# branch is the usual one. The cwd link is then the only OSC 8 left on the line.
+link_local() {  # $1 = remote URL, $2 = branch; same, but the branch is unpushed
+  git -C "$REPO_TMP" remote remove origin 2>/dev/null
+  git -C "$REPO_TMP" remote add origin "$1"
+  git -C "$REPO_TMP" checkout -q -B "$2" main
+  git -C "$REPO_TMP" update-ref -d "refs/remotes/origin/$2" 2>/dev/null
+  ( cd "$REPO_TMP" && bash "$SCRIPT" < "$SAMPLE" 2>/dev/null ) \
+    | head -1 | grep -oP '\x1b\]8;;\K[^\x07]+' | tail -1
+}
+check "(link) unpushed branch → cwd link only" \
+  '[ "$(link_local https://github.com/o/r.git wt-scratch)" = "file:///home/jimmy/projects/conex/jj" ]'
 check "(link) branch # encoded" \
   '[ "$(link https://github.com/o/r.git "x#y")" = "https://github.com/o/r/tree/x%23y" ]'
 # The one byte that must NOT be escaped: `feat/x` is both a real ref and a real

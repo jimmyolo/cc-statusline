@@ -449,12 +449,28 @@ REMOTE=$(git remote get-url origin 2>/dev/null)
 #   ssh://git@host:2222/grp/repo.git → https://host/grp/repo
 #   deploy@host:grp/repo.git         → https://host/grp/repo
 #   https://host:30001/grp/repo.git  → https://host:30001/grp/repo
+#
+# The SSH port says nothing about which port serves the web UI, and a
+# self-hosted forge often puts them on different ones. Only the user knows:
+# CC_STATUSLINE_WEB_PORT is appended to the host of an SSH-derived URL, and
+# left alone on an https remote, which already carries its own port.
+#
+#   CC_STATUSLINE_WEB_PORT=30001
+#   ssh://git@host:30023/grp/repo.git → https://host:30001/grp/repo
+# Digits only: the value lands in the target of a clickable link, where a
+# stray `/` or `@` would send it to another host entirely.
+_web_port=""
+case $CC_STATUSLINE_WEB_PORT in
+  ''|*[!0-9]*) ;;
+  *)           _web_port=":$CC_STATUSLINE_WEB_PORT" ;;
+esac
 case $REMOTE in
   ssh://*) REMOTE=${REMOTE#ssh://}; REMOTE=${REMOTE#*@}
            _r_host=${REMOTE%%/*}
-           REMOTE="https://${_r_host%%:*}/${REMOTE#*/}" ;;
+           REMOTE="https://${_r_host%%:*}${_web_port}/${REMOTE#*/}" ;;
   *://*)   ;;
-  *@*:*)   REMOTE=${REMOTE#*@}; REMOTE="https://${REMOTE/:/\/}" ;;
+  *@*:*)   REMOTE=${REMOTE#*@}
+           REMOTE="https://${REMOTE%%:*}${_web_port}/${REMOTE#*:}" ;;
 esac
 REMOTE=${REMOTE%.git}
 # In a linked worktree the branch name links to the worktree's own directory
@@ -463,12 +479,17 @@ REMOTE=${REMOTE%.git}
 BRANCH_LINK="$BRANCH"
 if [ "$IS_WORKTREE" -eq 1 ] && [ -n "$_toplevel" ]; then
   BRANCH_LINK=$(printf '%b' "\e]8;;file://$(urlenc_path "$_toplevel")\a${BRANCH}\e]8;;\a")
-elif [ -n "$REMOTE" ] && [ "$ON_BRANCH" -eq 1 ]; then
+elif [ -n "$REMOTE" ] && [ "$ON_BRANCH" -eq 1 ] &&
+     git show-ref --verify --quiet "refs/remotes/origin/$BRANCH" 2>/dev/null; then
   # Branch name links to the branch's own tree on the forge — opening it both
   # shows the code at that ref and switches the forge's branch selector to it.
   # Only a checked-out local branch gets one: the detached-HEAD fallback above
   # yields a remote ref or the literal `detached`, neither of which is a branch
   # the forge would resolve.
+  #
+  # A branch the remote has never seen has no tree there either, so the link is
+  # built only once refs/remotes/origin/<branch> exists. It costs the one ref
+  # lookup above; nothing else on this path spawns.
   #
   # Forge shape is guessed from the host alone — matching the path too would
   # read github.com/gitlab-org/gitlab as GitLab. A self-hosted instance often
