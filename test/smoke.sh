@@ -121,7 +121,7 @@ check "(active) contains current todo"      'grep -q "second" <<< "$plain2"'
 echo
 echo "Running branch-label cases in a scratch repo…"
 REPO_TMP=$(mktemp -d -t cc-statusline-smoke.XXXXXX)
-trap 'rm -f "$TRANSCRIPT_TMP"; rm -rf "$REPO_TMP"' EXIT
+trap 'rm -f "$TRANSCRIPT_TMP"; rm -rf "$REPO_TMP" "$REPO_TMP/../wt-$$"' EXIT
 (
   cd "$REPO_TMP"
   git init -q -b main
@@ -143,6 +143,25 @@ label() {  # $1 = revision to check out; echoes L1's branch:commit token
 check "(git) detached at origin ref → ref name" '[[ "$(label main~0)" =~ ^origin/main:[0-9a-f]+$ ]]'
 check "(git) detached, no origin ref → literal" '[[ "$(label decoy~0)" =~ ^detached:[0-9a-f]+$ ]]'
 check "(git) on a branch → branch name"         '[[ "$(label main)" =~ ^main:[0-9a-f]+$ ]]'
+# The glyph before the branch says which checkout this is:  in a normal one,
+# τ in a linked worktree. Same repo, so only the glyph may differ.
+glyph() {  # $1 = directory to render from; echoes the glyph before the branch
+  ( cd "$1" && bash "$SCRIPT" < "$SAMPLE" 2>/dev/null ) \
+    | sed -E 's/\x1b\[[0-9;]*[a-zA-Z]//g; s/\x1b\]8;;[^\x07]*\x07//g' \
+    | head -1 | grep -oP '\S(?= \S+:[0-9a-f]+)'
+}
+git -C "$REPO_TMP" checkout -q main
+git -C "$REPO_TMP" worktree add -q "$REPO_TMP/../wt-$$" -b wt-branch >/dev/null 2>&1
+GLYPH_BRANCH=$'\ue0a0'
+check "(git) main checkout → branch glyph"     '[ "$(glyph "$REPO_TMP")" = "$GLYPH_BRANCH" ]'
+check "(git) linked worktree → tau glyph"      '[ "$(glyph "$REPO_TMP/../wt-$$")" = "τ" ]'
+# In a worktree the branch name reaches the worktree's own directory — the shown
+# path is the main checkout's, so nothing else on the line would.
+wt_branch_link() {
+  ( cd "$1" && bash "$SCRIPT" < "$SAMPLE" 2>/dev/null ) | head -1 \
+    | grep -oP '\x1b\]8;;\K[^\x07]+' | tail -1
+}
+check "(git) worktree branch → its own dir"    '[ "$(wt_branch_link "$REPO_TMP/../wt-$$")" = "file://$(cd "$REPO_TMP/../wt-$$" && pwd)" ]'
 
 # ── Fourth pass: CLAUDE_AUTOCOMPACT_PCT_OVERRIDE ───────────────────────────
 # The bar divides by the override'd budget, so a wrong parse is invisible in the

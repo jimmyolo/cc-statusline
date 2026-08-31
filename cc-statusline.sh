@@ -230,8 +230,11 @@ if [ -f "$HISTORY_FILE" ] && [ -n "$SESSION_ID" ]; then
   fi
 fi
 
-# Branch glyph (U+E0A0, Powerline) — same one ~/.bashrc's PS1 uses.
-GIT_GLYPH=$'\ue0a0'
+# Branch glyph: U+E0A0 (Powerline), the same one ~/.bashrc's PS1 uses, and τ in
+# a linked worktree — one glyph answering "am I in the checkout I think I am".
+# Assigned after the git probe, which is what decides between them.
+BRANCH_GLYPH=$'\ue0a0'
+WORKTREE_GLYPH=$'\u03c4'
 
 # Shell user, as PS1's \u shows it.
 USER_NAME=${USER:-$(id -un 2>/dev/null)}
@@ -243,6 +246,28 @@ RED='\033[31m'; MAGENTA='\033[35m'; BLUE='\033[34m'
 WHITE='\033[37m'
 
 SEP="${DIM} | ${RESET}"
+
+# ── Helper: escape a value for use inside a URL path ─────────
+# Every OSC 8 target on L1 is a path — a `file://` directory or a forge tree —
+# so `/` must survive verbatim (`feat/x` is both a real ref and a real tree
+# path, and %2F is resolved by neither forge). Only the bytes that would break
+# the path are escaped: `%` first, or it would re-encode what follows, then `#`
+# which truncates the URL, `?` which starts a query string, and a space, which
+# is legal in no URL.
+urlenc_path() {
+  local v=$1 out="" i c
+  for ((i = 0; i < ${#v}; i++)); do
+    c=${v:i:1}
+    case $c in
+      '%') out="${out}%25" ;;
+      '#') out="${out}%23" ;;
+      '?') out="${out}%3F" ;;
+      ' ') out="${out}%20" ;;
+      *)   out="${out}${c}" ;;
+    esac
+  done
+  printf '%s' "$out"
+}
 
 # ── Helper: color by percentage ───────────────────────────────
 color_pct() {
@@ -375,14 +400,23 @@ fi
 BRANCH=""
 IS_GIT=0
 GIT_COMMIT=""
-# One rev-parse answers both questions. It resolves arguments in order and
-# prints each as it goes, so a repo with no commit yet still emits the git-dir
-# line before HEAD fails — the exit status reflects only the last argument, so
-# key on the lines, never on $?.
-{ read -r _gitdir; read -r GIT_COMMIT; } < <(
-  git rev-parse --git-dir --short HEAD 2>/dev/null
+# One rev-parse answers every git question on this path. It resolves arguments
+# in order and prints each as it goes, so a repo with no commit yet still emits
+# the two dir lines before HEAD fails — the exit status reflects only the last
+# argument, so key on the lines, never on $?. Flag-derived values print before
+# any revision, so the short HEAD is always the last line whatever the argument
+# order — a bare repo, which has no toplevel, simply emits one line fewer.
+#
+# The two dirs differ only in a linked worktree (.git/worktrees/<name> against
+# .git), which is what picks the branch glyph and rewrites the displayed path.
+{ read -r _gitdir; read -r _gitcommondir; read -r _toplevel; read -r GIT_COMMIT; } < <(
+  git rev-parse --git-dir --git-common-dir --show-toplevel --short HEAD 2>/dev/null
 )
 [ -n "$_gitdir" ] && IS_GIT=1
+IS_WORKTREE=0
+[ -n "$_gitdir" ] && [ "$_gitdir" != "$_gitcommondir" ] && IS_WORKTREE=1
+GIT_GLYPH=$BRANCH_GLYPH
+[ "$IS_WORKTREE" -eq 1 ] && GIT_GLYPH=$WORKTREE_GLYPH
 [ "$IS_GIT" -eq 1 ] && BRANCH="$(git branch --show-current 2>/dev/null)"
 ON_BRANCH=0
 [ -n "$BRANCH" ] && ON_BRANCH=1
@@ -423,8 +457,13 @@ case $REMOTE in
   *@*:*)   REMOTE=${REMOTE#*@}; REMOTE="https://${REMOTE/:/\/}" ;;
 esac
 REMOTE=${REMOTE%.git}
+# In a linked worktree the branch name links to the worktree's own directory
+# instead of the forge: the displayed path is the main checkout's, so this is the
+# only place left to reach the checkout actually being worked in.
 BRANCH_LINK="$BRANCH"
-if [ -n "$REMOTE" ] && [ "$ON_BRANCH" -eq 1 ]; then
+if [ "$IS_WORKTREE" -eq 1 ] && [ -n "$_toplevel" ]; then
+  BRANCH_LINK=$(printf '%b' "\e]8;;file://$(urlenc_path "$_toplevel")\a${BRANCH}\e]8;;\a")
+elif [ -n "$REMOTE" ] && [ "$ON_BRANCH" -eq 1 ]; then
   # Branch name links to the branch's own tree on the forge — opening it both
   # shows the code at that ref and switches the forge's branch selector to it.
   # Only a checked-out local branch gets one: the detached-HEAD fallback above
@@ -446,22 +485,7 @@ if [ -n "$REMOTE" ] && [ "$ON_BRANCH" -eq 1 ]; then
       *)        _forge=github ;;
     esac
   fi
-  # The ref lands in a URL *path*, where `/` is the one byte that must survive
-  # verbatim (`feat/x` is a real branch and a real tree path). Only the three
-  # bytes git allows in a ref that would break the path are escaped: `%` (an
-  # escape itself), `#` (truncates the URL) and `?` (starts a query string).
-  # A space is escaped too — legal in no URL.
-  _b_enc=""
-  for ((_i = 0; _i < ${#BRANCH}; _i++)); do
-    _c=${BRANCH:_i:1}
-    case $_c in
-      '%') _b_enc="${_b_enc}%25" ;;
-      '#') _b_enc="${_b_enc}%23" ;;
-      '?') _b_enc="${_b_enc}%3F" ;;
-      ' ') _b_enc="${_b_enc}%20" ;;
-      *)   _b_enc="${_b_enc}${_c}" ;;
-    esac
-  done
+  _b_enc=$(urlenc_path "$BRANCH")
   if [ "$_forge" = gitlab ]; then
     _tree_url="${REMOTE}/-/tree/${_b_enc}"
   else
@@ -474,25 +498,27 @@ fi
 # while the link keeps the absolute one. A `file://` target opens the directory
 # in the desktop file manager, which is what a path is wanted for; the forge page
 # is one click further along the branch name.
-PWD_DISP="$DIR"
+# In a linked worktree the cwd sits under .claude/worktrees/<name>, which says
+# where the checkout lives rather than which project it is. The path is rewritten
+# to the main checkout's — the τ glyph already carries "this is a worktree", so
+# the path is free to stay put across a switch into one and back.
+PWD_ABS="$DIR"
+if [ "$IS_WORKTREE" -eq 1 ] && [ -n "$_toplevel" ] && [ -n "$_gitcommondir" ]; then
+  _main_root=${_gitcommondir%/.git}
+  case "$DIR" in
+    "$_toplevel")   PWD_ABS="$_main_root" ;;
+    "$_toplevel"/*) PWD_ABS="${_main_root}${DIR#$_toplevel}" ;;
+  esac
+fi
+
+PWD_DISP="$PWD_ABS"
 case "$PWD_DISP" in
   "$HOME")   PWD_DISP="~" ;;
   "$HOME"/*) PWD_DISP="~${PWD_DISP#$HOME}" ;;
 esac
 PWD_LINK="$PWD_DISP"
-if [ -n "$DIR" ]; then
-  # Same three-byte rule as the ref above, on a path that may hold anything.
-  _d_enc=""
-  for ((_i = 0; _i < ${#DIR}; _i++)); do
-    _c=${DIR:_i:1}
-    case $_c in
-      '%') _d_enc="${_d_enc}%25" ;;
-      '#') _d_enc="${_d_enc}%23" ;;
-      '?') _d_enc="${_d_enc}%3F" ;;
-      ' ') _d_enc="${_d_enc}%20" ;;
-      *)   _d_enc="${_d_enc}${_c}" ;;
-    esac
-  done
+if [ -n "$PWD_ABS" ]; then
+  _d_enc=$(urlenc_path "$PWD_ABS")
   PWD_LINK=$(printf '%b' "\e]8;;file://${_d_enc}\a${PWD_DISP}\e]8;;\a")
 fi
 

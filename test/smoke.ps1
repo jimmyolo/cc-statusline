@@ -209,6 +209,34 @@ try {
         return $m[$m.Count - 1].Groups[1].Value
     }
 
+    # The glyph before the branch says which checkout this is: U+E0A0 in a normal
+    # one, tau in a linked worktree.
+    function Get-BranchGlyph {   # $Dir -> the glyph before the branch on L1
+        param([string]$Dir)
+        Push-Location $Dir
+        $o = Get-Content -Raw $Sample | & $PwshExe -NoProfile -File $Script
+        Pop-Location
+        $p = ($o -join "`n") -replace "`e\[[0-9;]*[a-zA-Z]", '' -replace "`e\]8;;[^`a]*`a", ''
+        $l1 = ($p -split "`n")[0]
+        if ($l1 -match '(\S) \S+:[0-9a-f]+') { $Matches[1] } else { '' }
+    }
+    $WtPath = "$RepoTmp-wt"
+    Push-Location $RepoTmp
+    git checkout -q main 2>&1 | Out-Null
+    git worktree add -q $WtPath -b wt-branch 2>&1 | Out-Null
+    Pop-Location
+    Test-Check "(git) main checkout -> branch glyph" ((Get-BranchGlyph $RepoTmp) -eq [string][char]0xE0A0)
+    Test-Check "(git) linked worktree -> tau glyph"  ((Get-BranchGlyph $WtPath) -eq [string][char]0x03C4)
+    # In a worktree the branch name reaches the worktree's own directory — the
+    # shown path is the main checkout's, so nothing else on the line would.
+    Push-Location $WtPath
+    $wtRaw = Get-Content -Raw $Sample | & $PwshExe -NoProfile -File $Script
+    Pop-Location
+    $wtLine = ($wtRaw -join "`n") -split "`n" | Select-Object -First 1
+    $wtMatches = [regex]::Matches($wtLine, "`e\]8;;([^`a]*)`a")
+    $wtLast = if ($wtMatches.Count -gt 0) { $wtMatches[$wtMatches.Count - 1].Groups[1].Value } else { '' }
+    Test-Check "(git) worktree branch -> its own dir" ($wtLast -eq ("file://" + ((Resolve-Path $WtPath).Path -replace '\\', '/')))
+
     Test-Check "(link) scp remote -> https tree URL" `
       ((Get-BranchLink 'git@github.com:o/r.git' 'b') -eq 'https://github.com/o/r/tree/b')
     # An SSH remote is unbrowsable as given; the user and the SSH port are dropped.
@@ -245,6 +273,7 @@ try {
     }
 } finally {
     Remove-Item -Recurse -Force $RepoTmp -ErrorAction SilentlyContinue
+    if ($WtPath) { Remove-Item -Recurse -Force $WtPath -ErrorAction SilentlyContinue }
 }
 
 Write-Output ""

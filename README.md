@@ -112,7 +112,7 @@ The full mapping (with paired-disable annotations) lives at the top of [`cc-stat
 
 ### Project state
 
-L1's middle field mirrors the shell prompt — `user:cwd  branch:commit (M A D +N -N)`, same colors and the same U+E0A0 branch glyph a Powerline-style `PS1` uses — so it reads as the prompt already being scanned rather than as a second, differently-shaped one. The path is the full `~`-collapsed cwd, not a repo basename plus a subpath. The parenthesised group is live working-tree state (modified / added / deleted files, then staged+unstaged line diff); it drops out entirely on a clean tree. Session-cumulative `+N -N lines` from the cost JSON is a separate field on L3.
+L1's middle field mirrors the shell prompt — `user:cwd  branch:commit (M A D +N -N)`, same colors and the same U+E0A0 branch glyph a Powerline-style `PS1` uses — `τ` instead of that glyph when the checkout is a linked worktree — so it reads as the prompt already being scanned rather than as a second, differently-shaped one. The path is the full `~`-collapsed cwd, not a repo basename plus a subpath. The worktree glyph keys on `git rev-parse --git-dir` differing from `--git-common-dir`, read in the same single `rev-parse` that already answers the git-dir, toplevel and short-hash questions — no extra process. Inside a worktree the **path shown is the main checkout's**, not `…/.claude/worktrees/<name>`: it names the project, and switching into a worktree and back leaves it untouched, since `τ` already says which checkout this is. The parenthesised group is live working-tree state (modified / added / deleted files, then staged+unstaged line diff); it drops out entirely on a clean tree. Session-cumulative `+N -N lines` from the cost JSON is a separate field on L3.
 
 ### Session id
 
@@ -137,7 +137,7 @@ The URL shape follows the forge, guessed from the **host** alone (matching the p
 export CC_STATUSLINE_FORGE=gitlab   # or github; overrides the host guess
 ```
 
-The branch link is omitted on a detached HEAD, where the displayed name is a remote ref or the literal `detached` — neither is a branch the forge resolves.
+Inside a worktree the branch link is the only way left to reach the checkout actually being worked in, since the path names the main one — so it takes the worktree's directory and the forge link steps aside. The branch link is omitted on a detached HEAD, where the displayed name is a remote ref or the literal `detached` — neither is a branch the forge resolves.
 
 Both targets land in a URL *path*, so only the bytes that would break one are escaped: `%`, `#`, `?` and a space. `/` is deliberately left alone — `feat/x` is both a real ref and a real tree path, and `%2F` is resolved by neither forge.
 

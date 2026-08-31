@@ -149,8 +149,11 @@ $CacheRead = $Json.context_window.current_usage.cache_read_input_tokens      # +
 $CacheCreate = $Json.context_window.current_usage.cache_creation_input_tokens # + L2 % numerator (shared)
 $CurInput = $Json.context_window.current_usage.input_tokens                  # + L2 % numerator (shared)
 $SessionId = $Json.session_id
-# Branch glyph (U+E0A0, Powerline) — same one ~/.bashrc's PS1 uses.
-$GitGlyph = [char]0xE0A0
+# Branch glyph: U+E0A0 (Powerline), the same one ~/.bashrc's PS1 uses, and tau
+# in a linked worktree — one glyph answering "am I in the checkout I think I
+# am". Which of the two applies is decided by the git probe further down.
+$BranchGlyph = [char]0xE0A0
+$WorktreeGlyph = [char]0x03C4
 
 # Shell user, as bash PS1's \u shows it.
 $UserName = if ($env:USER) { $env:USER } elseif ($env:USERNAME) { $env:USERNAME } else { '' }
@@ -410,8 +413,13 @@ if ($null -ne $CtxEff -and $CtxEff -gt 0) {
 # ── Git info ──────────────────────────────────────────────────
 $Branch = ''
 $OnBranch = $false
-& git rev-parse --git-dir 2>$null 1>$null
-$IsGit = ($LASTEXITCODE -eq 0)
+# The two dirs differ only in a linked worktree (.git/worktrees/<name> against
+# .git), which is what picks the branch glyph and rewrites the displayed path.
+$RevDirs = @(& git rev-parse --git-dir --git-common-dir --show-toplevel 2>$null)
+$IsGit = ($RevDirs.Count -ge 2)
+$IsWorktree = ($IsGit -and ($RevDirs[0] -ne $RevDirs[1]))
+$Toplevel = if ($RevDirs.Count -ge 3) { $RevDirs[2] } else { '' }
+$GitGlyph = if ($IsWorktree) { $WorktreeGlyph } else { $BranchGlyph }
 if ($IsGit) {
     $Branch = (& git branch --show-current 2>$null)
     $OnBranch = [bool]$Branch
@@ -434,6 +442,16 @@ if ($IsGit) {
                      --format='%(refname:short)' refs/remotes/origin 2>$null)
     }
     if (-not $Branch) { $Branch = 'detached' }
+}
+
+# Every OSC 8 target on L1 is a path — a 'file://' directory or a forge tree — so
+# '/' must survive verbatim ('feat/x' is both a real ref and a real tree path,
+# and %2F is resolved by neither forge). Only the bytes that would break the path
+# are escaped: '%' first, or it would re-encode what follows, then '#' which
+# truncates the URL, '?' which starts a query string, and a space.
+function Format-UrlPath {
+    param([string]$Value)
+    ($Value -replace '%', '%25' -replace '#', '%23' -replace '\?', '%3F' -replace ' ', '%20')
 }
 
 $BranchLink = $Branch
@@ -468,13 +486,7 @@ if ($Remote) {
             $RHost = ($Remote -replace '^https://', '') -replace '/.*$', ''
             if ($RHost -like '*gitlab*') { $Forge = 'gitlab' } else { $Forge = 'github' }
         }
-        # The ref lands in a URL *path*, where '/' is the one byte that must
-        # survive verbatim ('feat/x' is a real branch and a real tree path).
-        # Only the bytes git allows in a ref that would break the path are
-        # escaped: '%' (an escape itself, so it goes first), '#' (truncates the
-        # URL), '?' (starts a query string) and a space (legal in no URL).
-        $BEnc = $Branch -replace '%', '%25' -replace '#', '%23' `
-                        -replace '\?', '%3F' -replace ' ', '%20'
+        $BEnc = Format-UrlPath $Branch
         if ($Forge -eq 'gitlab') {
             $TreeUrl = "$Remote/-/tree/$BEnc"
         } else {
@@ -484,11 +496,31 @@ if ($Remote) {
     }
 }
 
+# In a linked worktree the branch name links to the worktree's own directory
+# instead of the forge: the displayed path is the main checkout's, so this is the
+# only place left to reach the checkout actually being worked in.
+if ($IsWorktree -and $Toplevel) {
+    $BranchLink = "$Esc]8;;file://$(Format-UrlPath $Toplevel)$Bel$Branch$Esc]8;;$Bel"
+}
+
 # Working directory, PS1-style: the whole path, $HOME collapsed to ~ for display
 # while the link keeps the absolute one. A 'file://' target opens the directory
 # in the desktop file manager, which is what a path is wanted for; the forge page
 # is one click further along the branch name.
-$PwdDisp = $Dir
+# In a linked worktree the cwd sits under .claude/worktrees/<name>, which says
+# where the checkout lives rather than which project it is. The path is rewritten
+# to the main checkout's — the tau glyph already carries "this is a worktree", so
+# the path is free to stay put across a switch into one and back.
+$PwdAbs = $Dir
+if ($IsWorktree -and $Toplevel -and $Dir) {
+    $MainRoot = $RevDirs[1] -replace '[\\/]\.git$', ''
+    if ($Dir -eq $Toplevel) { $PwdAbs = $MainRoot }
+    elseif ($Dir.StartsWith("$Toplevel/") -or $Dir.StartsWith("$Toplevel\")) {
+        $PwdAbs = $MainRoot + $Dir.Substring($Toplevel.Length)
+    }
+}
+
+$PwdDisp = $PwdAbs
 if ($HOME -and $PwdDisp) {
     if ($PwdDisp -eq $HOME) { $PwdDisp = '~' }
     elseif ($PwdDisp.StartsWith("$HOME/") -or $PwdDisp.StartsWith("$HOME\")) {
@@ -496,11 +528,10 @@ if ($HOME -and $PwdDisp) {
     }
 }
 $PwdLink = $PwdDisp
-if ($Dir) {
-    # Same escape rule as the ref above. Windows paths are backslash-separated
-    # and start at a drive letter, which file:// spells with three slashes.
-    $DEnc = ($Dir -replace '\\', '/') -replace '%', '%25' -replace '#', '%23' `
-                                     -replace '\?', '%3F' -replace ' ', '%20'
+if ($PwdAbs) {
+    # Windows paths are backslash-separated and start at a drive letter, which
+    # file:// spells with three slashes.
+    $DEnc = Format-UrlPath ($PwdAbs -replace '\\', '/')
     $FileUrl = if ($DEnc.StartsWith('/')) { "file://$DEnc" } else { "file:///$DEnc" }
     $PwdLink = "$Esc]8;;$FileUrl$Bel$PwdDisp$Esc]8;;$Bel"
 }
