@@ -77,6 +77,12 @@ check "contains cache hit %"           'grep -q "cache 97%" <<< "$plain"'
 check "contains vim NORMAL marker"     'grep -q "NOR" <<< "$plain"'
 check "session id renders on L3"       '[ "$(printf "%s\n" "$plain" | sed -n 3p | grep -c "#test-session-id-xyz")" = 1 ]'
 check "cwd links to file://"           'grep -q "]8;;file:///home/jimmy/projects/conex/jj" <<< "$out"'
+# The sample's current_dir is a subdirectory of its project_dir, so the path shown
+# is the project root and not wherever the session wandered.
+check "L1 path is the project root"    '! grep -q "conex/jj/src" <<< "$plain"'
+# Older Claude versions send no project_dir; the cwd is what is left to show.
+check "no project_dir falls back to cwd" \
+  'jq "del(.workspace.project_dir)" "$SAMPLE" | bash "$SCRIPT" 2>/dev/null | grep -q "conex/jj/src"'
 check "L1 carries user:cwd"            'grep -qE "\| [^ :]+:[~/][^ ]* " <<< "$(printf "%s\n" "$plain" | sed -n 1p)"'
 check "account shows email only"       '! grep -qE "👤 [^ ]+ · " <<< "$plain"'
 

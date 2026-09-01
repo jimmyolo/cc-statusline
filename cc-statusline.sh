@@ -7,7 +7,8 @@
 #
 #   F[ 0] MODEL              .model.display_name                         → L1 model badge + EFFORT default lookup
 #   F[22] MODEL_ID           .model.id                                   → EFFORT per-model lookup
-#   F[ 1] DIR                .workspace.current_dir                      → L1 cwd (PS1-style, ~-collapsed) + repo hyperlink
+#   F[ 1] DIR                .workspace.current_dir                      → L1 path fallback when project_dir is absent
+#   F[23] PROJECT_DIR        .workspace.project_dir                      → L1 project root (PS1-style, ~-collapsed) + file:// hyperlink
 #   F[ 2] COST               .cost.total_cost_usd                        → L2 cost + today-cost tracker
 #   F[ 3] PCT                .context_window.used_percentage             → L2 context bar + % label (fallback only; recomputed vs CTX_EFF, l. ~284)
 #   F[ 4] CTX_SIZE           .context_window.context_window_size         → CTX_EFF → L2 window label + % denominator
@@ -66,11 +67,12 @@ readarray -t F < <(jq -r '
   .context_window.current_usage.input_tokens // "",
   .session_id // "",
   .transcript_path // "",
-  .model.id // ""
+  .model.id // "",
+  .workspace.project_dir // ""
 ' <<< "$input")
 
 MODEL=${F[0]}              # → L1 model + EFFORT default
-DIR=${F[1]}                # → L1 user:cwd + repo hyperlink
+DIR=${F[1]}                # → L1 path fallback when PROJECT_DIR is empty
 COST=${F[2]}               # → L2 cost + today tracker
 PCT=${F[3]}                # → L2 context bar + %  (fallback; recomputed vs CTX_EFF)
 CTX_SIZE=${F[4]}           # → CTX_EFF → L2 window label + % denominator
@@ -92,6 +94,7 @@ CUR_INPUT=${F[19]}         # → L3 cache hit + cur in    + L2 % numerator (shar
 SESSION_ID=${F[20]}        # → L3 session id + today tracker + last-prompt lookup
 TRANSCRIPT_PATH=${F[21]}   # → L4 agents/tools/todos
 MODEL_ID=${F[22]}          # → EFFORT per-model lookup
+PROJECT_DIR=${F[23]}       # → L1 project root + file:// hyperlink
 
 # ── Effort / thinking level (from settings.json) ──────────────
 # Two places hold it, and the per-model one wins: picking an effort while a
@@ -529,22 +532,19 @@ elif [ -n "$REMOTE" ] && [ "$ON_BRANCH" -eq 1 ] &&
   BRANCH_LINK=$(printf '%b' "\e]8;;${_tree_url}\a${BRANCH}\e]8;;\a")
 fi
 
-# Working directory, PS1-style: the whole path, $HOME collapsed to ~ for display
+# Project root, PS1-style: the whole path, $HOME collapsed to ~ for display
 # while the link keeps the absolute one. A `file://` target opens the directory
 # in the desktop file manager, which is what a path is wanted for; the forge page
 # is one click further along the branch name.
-# In a linked worktree the cwd sits under .claude/worktrees/<name>, which says
-# where the checkout lives rather than which project it is. The path is rewritten
-# to the main checkout's — the τ glyph already carries "this is a worktree", so
-# the path is free to stay put across a switch into one and back.
-PWD_ABS="$DIR"
-if [ "$IS_WORKTREE" -eq 1 ] && [ -n "$_toplevel" ] && [ -n "$_gitcommondir" ]; then
-  _main_root=${_gitcommondir%/.git}
-  case "$DIR" in
-    "$_toplevel")   PWD_ABS="$_main_root" ;;
-    "$_toplevel"/*) PWD_ABS="${_main_root}${DIR#$_toplevel}" ;;
-  esac
-fi
+#
+# The project root, not the cwd: a session wanders into subdirectories that say
+# nothing about which project it is, and inside a worktree the cwd sits under
+# .claude/worktrees/<name>, which says where the checkout lives rather than what
+# it holds. Claude reports the root it was launched on, so it is read rather than
+# derived; older versions that do not send it fall back to the cwd. The τ glyph
+# already carries "this is a worktree", and the branch name links to the worktree
+# directory itself for whoever wants the real location.
+PWD_ABS="${PROJECT_DIR:-$DIR}"
 
 PWD_DISP="$PWD_ABS"
 case "$PWD_DISP" in

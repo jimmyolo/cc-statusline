@@ -8,7 +8,8 @@
 #
 #   Model              .model.display_name                         -> L1 model badge + Effort default lookup
 #   ModelId            .model.id                                   -> Effort per-model lookup
-#   Dir                .workspace.current_dir                      -> L1 cwd (PS1-style, ~-collapsed) + repo hyperlink
+#   Dir                .workspace.current_dir                      -> L1 path fallback when ProjectDir is absent
+#   ProjectDir         .workspace.project_dir                      -> L1 project root (PS1-style, ~-collapsed) + file:// hyperlink
 #   Cost               .cost.total_cost_usd                        -> L2 cost + today-cost tracker
 #   Pct                .context_window.used_percentage              -> L2 context bar + % label (fallback only; recomputed vs CtxEff)
 #   CtxSize            .context_window.context_window_size          -> CtxEff -> L2 window label + % denominator
@@ -130,6 +131,7 @@ $Model = $Json.model.display_name
 if ([string]::IsNullOrEmpty($Model)) { $Model = 'Claude' }
 $ModelId = $Json.model.id
 $Dir = $Json.workspace.current_dir
+$ProjectDir = $Json.workspace.project_dir
 $Cost = $Json.cost.total_cost_usd
 if ($null -eq $Cost) { $Cost = 0 }
 $Pct = [math]::Floor([double]($(if ($null -eq $Json.context_window.used_percentage) { 0 } else { $Json.context_window.used_percentage })))  # fallback; recomputed vs $CtxEff
@@ -545,22 +547,19 @@ if ($IsWorktree -and $Toplevel) {
     $BranchLink = "$Esc]8;;file://$(Format-UrlPath $Toplevel)$Bel$Branch$Esc]8;;$Bel"
 }
 
-# Working directory, PS1-style: the whole path, $HOME collapsed to ~ for display
+# Project root, PS1-style: the whole path, $HOME collapsed to ~ for display
 # while the link keeps the absolute one. A 'file://' target opens the directory
 # in the desktop file manager, which is what a path is wanted for; the forge page
 # is one click further along the branch name.
-# In a linked worktree the cwd sits under .claude/worktrees/<name>, which says
-# where the checkout lives rather than which project it is. The path is rewritten
-# to the main checkout's — the tau glyph already carries "this is a worktree", so
-# the path is free to stay put across a switch into one and back.
-$PwdAbs = $Dir
-if ($IsWorktree -and $Toplevel -and $Dir) {
-    $MainRoot = $RevDirs[1] -replace '[\\/]\.git$', ''
-    if ($Dir -eq $Toplevel) { $PwdAbs = $MainRoot }
-    elseif ($Dir.StartsWith("$Toplevel/") -or $Dir.StartsWith("$Toplevel\")) {
-        $PwdAbs = $MainRoot + $Dir.Substring($Toplevel.Length)
-    }
-}
+#
+# The project root, not the cwd: a session wanders into subdirectories that say
+# nothing about which project it is, and inside a worktree the cwd sits under
+# .claude/worktrees/<name>, which says where the checkout lives rather than what
+# it holds. Claude reports the root it was launched on, so it is read rather than
+# derived; older versions that do not send it fall back to the cwd. The tau glyph
+# already carries "this is a worktree", and the branch name links to the worktree
+# directory itself for whoever wants the real location.
+$PwdAbs = $(if ([string]::IsNullOrEmpty($ProjectDir)) { $Dir } else { $ProjectDir })
 
 $PwdDisp = $PwdAbs
 if ($HOME -and $PwdDisp) {

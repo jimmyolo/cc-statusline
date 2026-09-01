@@ -83,7 +83,8 @@ Both scripts read the same 22 fields from the JSON Claude Code pipes to `statusL
 | Field | JSON path | Displayed in |
 |---|---|---|
 | `MODEL` | `.model.display_name` | L1 model badge |
-| `DIR` | `.workspace.current_dir` | L1 cwd (`~`-collapsed) + repo hyperlink |
+| `DIR` | `.workspace.current_dir` | L1 path fallback when `project_dir` is absent |
+| `PROJECT_DIR` | `.workspace.project_dir` | L1 project root (`~`-collapsed) + `file://` hyperlink |
 | `COST` | `.cost.total_cost_usd` | L2 cost + today tracker |
 | `PCT` | `.context_window.used_percentage` | L2 context bar (fallback only — recomputed against `CTX_EFF`) |
 | `CTX_SIZE` | `.context_window.context_window_size` | `CTX_EFF` → L2 window label + `%` denominator |
@@ -105,14 +106,14 @@ The full mapping (with paired-disable annotations) lives at the top of [`cc-stat
 
 | Line | Contents |
 |---|---|
-| L1 | model · `user:cwd` · `branch:commit` · git-stats · vim · account (redacted email) |
+| L1 | model · `user:project-root` · `branch:commit` · git-stats · vim · account (redacted email) |
 | L2 | context-bar · window label · cost (session + today) · 5h limit · 7d limit |
 | L3 | cache-hit · tokens in/out · api wait · session lines · session id · running tools |
 | L4 | running tools · todos (with current task) · last prompt (with `❯` marker) — entire line conditionally rendered |
 
 ### Project state
 
-L1's middle field mirrors the shell prompt — `user:cwd  branch:commit (M A D +N -N)`, same colors and the same U+E0A0 branch glyph a Powerline-style `PS1` uses — `τ` instead of that glyph when the checkout is a linked worktree — so it reads as the prompt already being scanned rather than as a second, differently-shaped one. The path is the full `~`-collapsed cwd, not a repo basename plus a subpath. The worktree glyph keys on `git rev-parse --git-dir` differing from `--git-common-dir`, read in the same single `rev-parse` that already answers the git-dir, toplevel and short-hash questions — no extra process. Inside a worktree the **path shown is the main checkout's**, not `…/.claude/worktrees/<name>`: it names the project, and switching into a worktree and back leaves it untouched, since `τ` already says which checkout this is. The parenthesised group is live working-tree state (modified / added / deleted files, then staged+unstaged line diff); it drops out entirely on a clean tree. Session-cumulative `+N -N lines` from the cost JSON is a separate field on L3.
+L1's middle field mirrors the shell prompt — `user:path  branch:commit (M A D +N -N)`, same colors and the same U+E0A0 branch glyph a Powerline-style `PS1` uses — `τ` instead of that glyph when the checkout is a linked worktree — so it reads as the prompt already being scanned rather than as a second, differently-shaped one. The path is the full `~`-collapsed **project root** Claude reports in `workspace.project_dir`, not the cwd: a session that wanders into a subdirectory still shows the project it is working on, and inside a worktree the path stays the checkout Claude was launched on rather than `…/.claude/worktrees/<name>`. A Claude version old enough not to send the field falls back to the cwd. The worktree glyph keys on `git rev-parse --git-dir` differing from `--git-common-dir`, read in the same single `rev-parse` that already answers the git-dir, toplevel and short-hash questions — no extra process; `τ` says which checkout this is, and the branch name links to the worktree directory for whoever wants the real location. The parenthesised group is live working-tree state (modified / added / deleted files, then staged+unstaged line diff); it drops out entirely on a clean tree. Session-cumulative `+N -N lines` from the cost JSON is a separate field on L3.
 
 ### Session id
 
@@ -124,10 +125,10 @@ Two OSC 8 links on L1 — no API call, and one local ref lookup for the branch l
 
 | Text | Opens |
 |---|---|
-| cwd path | `file://<absolute path>` — the directory in the desktop file manager (the main checkout's, in a worktree) |
+| project root | `file://<absolute path>` — the directory in the desktop file manager |
 | branch name | that branch's tree on the forge — **or**, inside a linked worktree, `file://` that worktree's own directory |
 
-The cwd link keeps the absolute path even though the text shows it `~`-collapsed, and needs no remote — it works in a directory that is not a repository at all.
+The path link keeps the absolute path even though the text shows it `~`-collapsed, and needs no remote — it works in a directory that is not a repository at all.
 
 The branch link is derived from `origin`. An SSH remote is not browsable, so it is rewritten to the web URL of the same repository — the SSH user and the `ssh://` port are dropped, while a port on an `https` remote is kept, since a self-hosted forge often serves its UI there.
 

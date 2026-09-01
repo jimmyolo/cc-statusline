@@ -81,6 +81,9 @@ Test-Check "contains vim NORMAL marker" ($plain -match 'NOR')
 $plainLines = $plain -split "`n"
 Test-Check "session id renders on L3"    ($plainLines[2] -match '#test-session-id-xyz')
 Test-Check "cwd links to file://"        (($out -join "`n") -match 'file:///home/jimmy/projects/conex/jj')
+# The sample's current_dir is a subdirectory of its project_dir, so the path shown
+# is the project root and not wherever the session wandered.
+Test-Check "L1 path is the project root" (-not (($plain -join "`n") -match 'conex/jj/src'))
 Test-Check "L1 carries user:cwd"         ($plainLines[0] -match '\| [^ :]+:[~/]')
 Test-Check "account shows email only"    (-not ($plain -match "$([char]0x1F464) [^ ]+ $([char]0x00B7) "))
 
