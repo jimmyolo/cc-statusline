@@ -541,10 +541,19 @@ fi
 # nothing about which project it is, and inside a worktree the cwd sits under
 # .claude/worktrees/<name>, which says where the checkout lives rather than what
 # it holds. Claude reports the root it was launched on, so it is read rather than
-# derived; older versions that do not send it fall back to the cwd. The τ glyph
-# already carries "this is a worktree", and the branch name links to the worktree
-# directory itself for whoever wants the real location.
+# derived; older versions that do not send it fall back to the cwd.
+#
+# A session launched inside a worktree reports that worktree AS its project root,
+# which is the long path this avoids everywhere else, so the linked-worktree case
+# collapses to the main checkout — the project is the same one either way. The τ
+# glyph already carries "this is a worktree", and the branch name links to the
+# worktree directory itself for whoever wants the real location.
 PWD_ABS="${PROJECT_DIR:-$DIR}"
+if [ "$IS_WORKTREE" -eq 1 ] && [ -n "$_toplevel" ] && [ -n "$_gitcommondir" ]; then
+  case "$PWD_ABS" in
+    "$_toplevel"|"$_toplevel"/*) PWD_ABS="${_gitcommondir%/.git}" ;;
+  esac
+fi
 
 PWD_DISP="$PWD_ABS"
 case "$PWD_DISP" in
