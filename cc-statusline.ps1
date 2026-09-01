@@ -7,7 +7,9 @@
 #   [x] active   [ ] block currently commented out (paired-disable candidate)
 #
 #   Model              .model.display_name                         -> L1 model badge + Effort default lookup
-#   Dir                .workspace.current_dir                      -> L1 cwd (PS1-style, ~-collapsed) + repo hyperlink
+#   ModelId            .model.id                                   -> Effort per-model lookup
+#   Dir                .workspace.current_dir                      -> L1 path fallback when ProjectDir is absent
+#   ProjectDir         .workspace.project_dir                      -> L1 project root (PS1-style, ~-collapsed) + file:// hyperlink
 #   Cost               .cost.total_cost_usd                        -> L2 cost + today-cost tracker
 #   Pct                .context_window.used_percentage              -> L2 context bar + % label (fallback only; recomputed vs CtxEff)
 #   CtxSize            .context_window.context_window_size          -> CtxEff -> L2 window label + % denominator
@@ -127,7 +129,9 @@ try { $Json = $rawInput | ConvertFrom-Json } catch { $Json = [PSCustomObject]@{}
 
 $Model = $Json.model.display_name
 if ([string]::IsNullOrEmpty($Model)) { $Model = 'Claude' }
+$ModelId = $Json.model.id
 $Dir = $Json.workspace.current_dir
+$ProjectDir = $Json.workspace.project_dir
 $Cost = $Json.cost.total_cost_usd
 if ($null -eq $Cost) { $Cost = 0 }
 $Pct = [math]::Floor([double]($(if ($null -eq $Json.context_window.used_percentage) { 0 } else { $Json.context_window.used_percentage })))  # fallback; recomputed vs $CtxEff
@@ -160,24 +164,43 @@ $UserName = if ($env:USER) { $env:USER } elseif ($env:USERNAME) { $env:USERNAME 
 $TranscriptPath = $Json.transcript_path
 
 # ── Effort / thinking level (from settings.json) ──────────────
+# Two places hold it, and the per-model one wins: picking an effort while a
+# model is selected writes modelSettings.<id>.effortLevel and leaves the
+# top-level effortLevel at whatever it was — so reading only the top level
+# shows the effort of a model the session is not on.
+#
+# The id is the canonical one settings.json keys on; a deployment suffix the
+# runtime may report (claude-opus-5[1m]) is not part of it.
 $SettingsPath = "$HOME/.claude/settings.json"
 $Effort = $null
 if (Test-Path $SettingsPath) {
-    try { $Effort = (Get-Content $SettingsPath -Raw | ConvertFrom-Json).effortLevel } catch {}
+    try {
+        $Settings = Get-Content $SettingsPath -Raw | ConvertFrom-Json
+        $BaseModelId = ($ModelId -split '\[')[0]
+        if ($BaseModelId -and $Settings.modelSettings) {
+            $Effort = $Settings.modelSettings.$BaseModelId.effortLevel
+        }
+        if ([string]::IsNullOrEmpty($Effort)) { $Effort = $Settings.effortLevel }
+    } catch {}
 }
-if ([string]::IsNullOrEmpty($Effort)) {
-    if ($Model -match 'Opus') { $Effort = 'medium' }
-    else { $Effort = 'high' }
-}
+# Nothing here guesses. A missing value reads 'unknown' and a value outside the
+# four levels prints as itself, so a badge that looks wrong points at the
+# setting rather than at a default standing in for it — which is what hid a
+# stale top-level effortLevel behind a plausible-looking (M).
+if ([string]::IsNullOrEmpty($Effort)) { $Effort = 'unknown' }
 $EffortLabel = switch ($Effort) {
     'low' { 'L' }
     'medium' { 'M' }
     'high' { 'H' }
     'xhigh' { 'xH' }
-    default { '' }
+    default { $Effort }
 }
 if ($Model -match 'Opus|Sonnet') {
     $ModelDisp = "$Model ($EffortLabel)"
+} elseif ($Effort -eq 'unknown') {
+    # Every model whose name says nothing about effort. Say so rather than
+    # printing a bare name that reads as "fine".
+    $ModelDisp = "$Model (unknown)"
 } else {
     $ModelDisp = $Model
 }
@@ -524,22 +547,19 @@ if ($IsWorktree -and $Toplevel) {
     $BranchLink = "$Esc]8;;file://$(Format-UrlPath $Toplevel)$Bel$Branch$Esc]8;;$Bel"
 }
 
-# Working directory, PS1-style: the whole path, $HOME collapsed to ~ for display
+# Project root, PS1-style: the whole path, $HOME collapsed to ~ for display
 # while the link keeps the absolute one. A 'file://' target opens the directory
 # in the desktop file manager, which is what a path is wanted for; the forge page
 # is one click further along the branch name.
-# In a linked worktree the cwd sits under .claude/worktrees/<name>, which says
-# where the checkout lives rather than which project it is. The path is rewritten
-# to the main checkout's — the tau glyph already carries "this is a worktree", so
-# the path is free to stay put across a switch into one and back.
-$PwdAbs = $Dir
-if ($IsWorktree -and $Toplevel -and $Dir) {
-    $MainRoot = $RevDirs[1] -replace '[\\/]\.git$', ''
-    if ($Dir -eq $Toplevel) { $PwdAbs = $MainRoot }
-    elseif ($Dir.StartsWith("$Toplevel/") -or $Dir.StartsWith("$Toplevel\")) {
-        $PwdAbs = $MainRoot + $Dir.Substring($Toplevel.Length)
-    }
-}
+#
+# The project root, not the cwd: a session wanders into subdirectories that say
+# nothing about which project it is, and inside a worktree the cwd sits under
+# .claude/worktrees/<name>, which says where the checkout lives rather than what
+# it holds. Claude reports the root it was launched on, so it is read rather than
+# derived; older versions that do not send it fall back to the cwd. The tau glyph
+# already carries "this is a worktree", and the branch name links to the worktree
+# directory itself for whoever wants the real location.
+$PwdAbs = $(if ([string]::IsNullOrEmpty($ProjectDir)) { $Dir } else { $ProjectDir })
 
 $PwdDisp = $PwdAbs
 if ($HOME -and $PwdDisp) {
@@ -622,7 +642,14 @@ if ($AcctEmail) {
 # ══════════════════════════════════════════════════════════════
 # LINE 1: Model + user:cwd + branch:commit + git stats + Vim + Account
 # ══════════════════════════════════════════════════════════════
-$L1 = "${Cyan}${Bold}${ModelDisp}${Reset}"
+# An effort the settings do not answer for is painted red inside the badge:
+# silence here is what let a stale value pass as a real one for weeks.
+if ($Effort -eq 'unknown') {
+    $ModelName = $ModelDisp -replace ' \(unknown\)$', ''
+    $L1 = "${Cyan}${Bold}${ModelName}${Reset} ${Red}${Bold}(unknown)${Reset}"
+} else {
+    $L1 = "${Cyan}${Bold}${ModelDisp}${Reset}"
+}
 
 # Project state, mirroring the shell prompt: user:cwd  branch:commit (M A D +N -N)
 $L1 += "${Sep}${Magenta}${Bold}${UserName}${Reset}${Dim}:${Reset}${Bold}${Green}${PwdLink}${Reset}"

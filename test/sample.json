@@ -1,6 +1,6 @@
 {
   "model": { "display_name": "Opus 4.7 (1M context)" },
-  "workspace": { "current_dir": "/home/jimmy/projects/conex/jj" },
+  "workspace": { "current_dir": "/home/jimmy/projects/conex/jj/src", "project_dir": "/home/jimmy/projects/conex/jj" },
   "cost": {
     "total_cost_usd": 1.2345,
     "total_duration_ms": 3600000,

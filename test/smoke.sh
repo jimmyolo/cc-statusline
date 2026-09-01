@@ -77,6 +77,12 @@ check "contains cache hit %"           'grep -q "cache 97%" <<< "$plain"'
 check "contains vim NORMAL marker"     'grep -q "NOR" <<< "$plain"'
 check "session id renders on L3"       '[ "$(printf "%s\n" "$plain" | sed -n 3p | grep -c "#test-session-id-xyz")" = 1 ]'
 check "cwd links to file://"           'grep -q "]8;;file:///home/jimmy/projects/conex/jj" <<< "$out"'
+# The sample's current_dir is a subdirectory of its project_dir, so the path shown
+# is the project root and not wherever the session wandered.
+check "L1 path is the project root"    '! grep -q "conex/jj/src" <<< "$plain"'
+# Older Claude versions send no project_dir; the cwd is what is left to show.
+check "no project_dir falls back to cwd" \
+  'jq "del(.workspace.project_dir)" "$SAMPLE" | bash "$SCRIPT" 2>/dev/null | grep -q "conex/jj/src"'
 check "L1 carries user:cwd"            'grep -qE "\| [^ :]+:[~/][^ ]* " <<< "$(printf "%s\n" "$plain" | sed -n 1p)"'
 check "account shows email only"       '! grep -qE "👤 [^ ]+ · " <<< "$plain"'
 
@@ -282,6 +288,62 @@ check "(link) branch slash survives" \
 # the forge resolves, so the cwd file:// link is the only OSC 8 left on the line.
 check "(link) detached HEAD → cwd link only" \
   '[ "$(link https://github.com/o/r.git b >/dev/null; git -C "$REPO_TMP" checkout -q --detach HEAD; cd "$REPO_TMP" && bash "$SCRIPT" < "$SAMPLE" 2>/dev/null | head -1 | grep -oP '"'"'\x1b\]8;;\K[^\x07]+'"'"' | tail -1)" = "file:///home/jimmy/projects/conex/jj" ]'
+
+# ── Sixth pass: the effort label, against a crafted settings.json ──────────
+# Effort is read from settings.json, not from stdin, so these point HOME at a
+# scratch copy rather than the machine's own — which also keeps the cost
+# tracker and account lookup out of the real one.
+echo
+echo "Running effort-label cases…"
+HOME_TMP=$(mktemp -d)
+trap 'rm -rf "$HOME_TMP"' EXIT
+mkdir -p "$HOME_TMP/.claude"
+SETTINGS_DEFAULT='{ "effortLevel": "medium",
+                    "modelSettings": { "claude-opus-5": { "effortLevel": "low" } } }'
+
+effort() {  # $1 = model id (may be empty), $2 = settings.json (default above)
+  printf '%s' "${2:-$SETTINGS_DEFAULT}" > "$HOME_TMP/.claude/settings.json"
+  printf '%s' "{\"model\":{\"id\":\"$1\",\"display_name\":\"Opus 5 (1M context)\"},
+    \"workspace\":{\"current_dir\":\"$HOME_TMP\"},
+    \"context_window\":{\"used_percentage\":10,\"context_window_size\":1000000},
+    \"session_id\":\"effort-test\"}" \
+    | HOME="$HOME_TMP" bash "$SCRIPT" 2>/dev/null \
+    | head -1 | sed -E 's/\x1b\[[0-9;]*[a-zA-Z]//g' | sed -E 's/ \|.*//'
+}
+
+effort_raw() {  # same, ANSI intact — the colour is part of what is asserted
+  printf '%s' "${2:-$SETTINGS_DEFAULT}" > "$HOME_TMP/.claude/settings.json"
+  printf '%s' "{\"model\":{\"id\":\"$1\",\"display_name\":\"Opus 5 (1M context)\"},
+    \"workspace\":{\"current_dir\":\"$HOME_TMP\"},
+    \"context_window\":{\"used_percentage\":10,\"context_window_size\":1000000},
+    \"session_id\":\"effort-test\"}" \
+    | HOME="$HOME_TMP" bash "$SCRIPT" 2>/dev/null | head -1
+}
+
+# Choosing an effort while a model is selected writes it under that model and
+# leaves the top-level value stale, so the per-model one has to win.
+check "(effort) per-model beats top-level" \
+  '[ "$(effort claude-opus-5)" = "Opus 5 (1M context) (L)" ]'
+# The runtime may report a deployment suffix settings.json does not key on.
+check "(effort) deployment suffix stripped" \
+  '[ "$(effort "claude-opus-5[1m]")" = "Opus 5 (1M context) (L)" ]'
+# A model with no entry of its own still gets the top-level value.
+check "(effort) unlisted model falls back" \
+  '[ "$(effort claude-sonnet-5)" = "Opus 5 (1M context) (M)" ]'
+# ...as does a payload with no id at all, which is what every older one is.
+check "(effort) missing id falls back" \
+  '[ "$(effort "")" = "Opus 5 (1M context) (M)" ]'
+# Settings that answer for no effort at all get no guess. A per-model default
+# standing in for the real value is exactly what hid a stale one behind a
+# plausible (M), so the badge says it does not know — and says it in red.
+check "(effort) no setting reads unknown" \
+  '[ "$(effort claude-opus-5 "{}")" = "Opus 5 (1M context) (unknown)" ]'
+check "(effort) unknown is painted red" \
+  '[ -n "$(effort_raw claude-opus-5 "{}" | grep -F "$(printf "\033[31m\033[1m(unknown)")")" ]'
+# A level outside the four prints as itself rather than vanishing into a blank
+# badge — `auto` is a real value the settings can hold.
+check "(effort) unrecognised level prints itself" \
+  '[ "$(effort claude-opus-5 "{\"effortLevel\":\"auto\"}")" = "Opus 5 (1M context) (auto)" ]'
 
 echo
 echo "Result: $pass passed, $fail failed."

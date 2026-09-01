@@ -6,7 +6,9 @@
 #   ✅ active   ❌ block currently commented out (paired-disable candidate)
 #
 #   F[ 0] MODEL              .model.display_name                         → L1 model badge + EFFORT default lookup
-#   F[ 1] DIR                .workspace.current_dir                      → L1 cwd (PS1-style, ~-collapsed) + repo hyperlink
+#   F[22] MODEL_ID           .model.id                                   → EFFORT per-model lookup
+#   F[ 1] DIR                .workspace.current_dir                      → L1 path fallback when project_dir is absent
+#   F[23] PROJECT_DIR        .workspace.project_dir                      → L1 project root (PS1-style, ~-collapsed) + file:// hyperlink
 #   F[ 2] COST               .cost.total_cost_usd                        → L2 cost + today-cost tracker
 #   F[ 3] PCT                .context_window.used_percentage             → L2 context bar + % label (fallback only; recomputed vs CTX_EFF, l. ~284)
 #   F[ 4] CTX_SIZE           .context_window.context_window_size         → CTX_EFF → L2 window label + % denominator
@@ -64,11 +66,13 @@ readarray -t F < <(jq -r '
   .context_window.current_usage.cache_creation_input_tokens // "",
   .context_window.current_usage.input_tokens // "",
   .session_id // "",
-  .transcript_path // ""
+  .transcript_path // "",
+  .model.id // "",
+  .workspace.project_dir // ""
 ' <<< "$input")
 
 MODEL=${F[0]}              # → L1 model + EFFORT default
-DIR=${F[1]}                # → L1 user:cwd + repo hyperlink
+DIR=${F[1]}                # → L1 path fallback when PROJECT_DIR is empty
 COST=${F[2]}               # → L2 cost + today tracker
 PCT=${F[3]}                # → L2 context bar + %  (fallback; recomputed vs CTX_EFF)
 CTX_SIZE=${F[4]}           # → CTX_EFF → L2 window label + % denominator
@@ -89,27 +93,40 @@ CACHE_CREATE=${F[18]}      # → L3 cache hit + cur write + L2 % numerator (shar
 CUR_INPUT=${F[19]}         # → L3 cache hit + cur in    + L2 % numerator (shared)
 SESSION_ID=${F[20]}        # → L3 session id + today tracker + last-prompt lookup
 TRANSCRIPT_PATH=${F[21]}   # → L4 agents/tools/todos
+MODEL_ID=${F[22]}          # → EFFORT per-model lookup
+PROJECT_DIR=${F[23]}       # → L1 project root + file:// hyperlink
 
 # ── Effort / thinking level (from settings.json) ──────────────
-EFFORT=$(jq -r '.effortLevel // empty' "$HOME/.claude/settings.json" 2>/dev/null)
-if [ -z "$EFFORT" ]; then
-  # Default per model
-  case "$MODEL" in
-    *Opus*) EFFORT=medium ;;
-    *)      EFFORT=high ;;
-  esac
-fi
+# Two places hold it, and the per-model one wins: picking an effort while a
+# model is selected writes modelSettings.<id>.effortLevel, leaving the
+# top-level effortLevel at whatever it was — so reading only the top level
+# shows the effort of a model the session is not on.
+#
+# The id is the canonical one settings.json keys on; a deployment suffix the
+# runtime may report (claude-opus-5[1m]) is not part of it.
+_model_id=${MODEL_ID%%[*}
+EFFORT=$(jq -r --arg id "$_model_id" \
+  '.modelSettings[$id].effortLevel // .effortLevel // empty' \
+  "$HOME/.claude/settings.json" 2>/dev/null)
+# Nothing here guesses. A missing value reads `unknown` and a value outside the
+# four levels prints as itself, so a badge that looks wrong points at the
+# setting rather than at a default standing in for it — which is what hid a
+# stale top-level effortLevel behind a plausible-looking (M).
+[ -z "$EFFORT" ] && EFFORT=unknown
 case "$EFFORT" in
   low)    EFFORT_LABEL=L ;;
   medium) EFFORT_LABEL=M ;;
   high)   EFFORT_LABEL=H ;;
   xhigh)  EFFORT_LABEL=xH ;;
-  *)      EFFORT_LABEL="" ;;
+  *)      EFFORT_LABEL=$EFFORT ;;
 esac
 # Only Opus/Sonnet support effort levels
 case "$MODEL" in
   *Opus*|*Sonnet*) MODEL_DISP="${MODEL} (${EFFORT_LABEL})" ;;
-  *)               MODEL_DISP="$MODEL" ;;
+  *)               MODEL_DISP="$MODEL"
+                   # Every model whose name says nothing about effort. Say so
+                   # rather than printing a bare name that reads as "fine".
+                   [ "$EFFORT" = unknown ] && MODEL_DISP="${MODEL} (unknown)" ;;
 esac
 
 # ── Today cost tracker ────────────────────────────────────────
@@ -515,22 +532,19 @@ elif [ -n "$REMOTE" ] && [ "$ON_BRANCH" -eq 1 ] &&
   BRANCH_LINK=$(printf '%b' "\e]8;;${_tree_url}\a${BRANCH}\e]8;;\a")
 fi
 
-# Working directory, PS1-style: the whole path, $HOME collapsed to ~ for display
+# Project root, PS1-style: the whole path, $HOME collapsed to ~ for display
 # while the link keeps the absolute one. A `file://` target opens the directory
 # in the desktop file manager, which is what a path is wanted for; the forge page
 # is one click further along the branch name.
-# In a linked worktree the cwd sits under .claude/worktrees/<name>, which says
-# where the checkout lives rather than which project it is. The path is rewritten
-# to the main checkout's — the τ glyph already carries "this is a worktree", so
-# the path is free to stay put across a switch into one and back.
-PWD_ABS="$DIR"
-if [ "$IS_WORKTREE" -eq 1 ] && [ -n "$_toplevel" ] && [ -n "$_gitcommondir" ]; then
-  _main_root=${_gitcommondir%/.git}
-  case "$DIR" in
-    "$_toplevel")   PWD_ABS="$_main_root" ;;
-    "$_toplevel"/*) PWD_ABS="${_main_root}${DIR#$_toplevel}" ;;
-  esac
-fi
+#
+# The project root, not the cwd: a session wanders into subdirectories that say
+# nothing about which project it is, and inside a worktree the cwd sits under
+# .claude/worktrees/<name>, which says where the checkout lives rather than what
+# it holds. Claude reports the root it was launched on, so it is read rather than
+# derived; older versions that do not send it fall back to the cwd. The τ glyph
+# already carries "this is a worktree", and the branch name links to the worktree
+# directory itself for whoever wants the real location.
+PWD_ABS="${PROJECT_DIR:-$DIR}"
 
 PWD_DISP="$PWD_ABS"
 case "$PWD_DISP" in
@@ -623,7 +637,13 @@ fi
 # LINE 1: Model + user:cwd + branch:commit + git stats + Vim + Account
 # INPUTS: MODEL_DISP PWD_LINK BRANCH_LINK GIT_COMMIT GIT_STATS VIM_MODE ACCOUNT
 # ══════════════════════════════════════════════════════════════
-L1="${CYAN}${BOLD}${MODEL_DISP}${RESET}"
+# An effort the settings do not answer for is painted red inside the badge:
+# silence here is what let a stale value pass as a real one for weeks.
+if [ "$EFFORT" = unknown ]; then
+  L1="${CYAN}${BOLD}${MODEL_DISP% (unknown)}${RESET} ${RED}${BOLD}(unknown)${RESET}"
+else
+  L1="${CYAN}${BOLD}${MODEL_DISP}${RESET}"
+fi
 # [ -n "$VERSION" ] && L1="${L1} ${DIM}v${VERSION}${RESET}"   # Hidden per AJ-25 — uncomment to re-enable Claude Code version.
 
 # ── Project state, mirroring the shell prompt: user:cwd  branch:commit (M A D +N -N) ──
