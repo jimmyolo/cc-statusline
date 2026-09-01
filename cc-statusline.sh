@@ -6,6 +6,7 @@
 #   ✅ active   ❌ block currently commented out (paired-disable candidate)
 #
 #   F[ 0] MODEL              .model.display_name                         → L1 model badge + EFFORT default lookup
+#   F[22] MODEL_ID           .model.id                                   → EFFORT per-model lookup
 #   F[ 1] DIR                .workspace.current_dir                      → L1 cwd (PS1-style, ~-collapsed) + repo hyperlink
 #   F[ 2] COST               .cost.total_cost_usd                        → L2 cost + today-cost tracker
 #   F[ 3] PCT                .context_window.used_percentage             → L2 context bar + % label (fallback only; recomputed vs CTX_EFF, l. ~284)
@@ -64,7 +65,8 @@ readarray -t F < <(jq -r '
   .context_window.current_usage.cache_creation_input_tokens // "",
   .context_window.current_usage.input_tokens // "",
   .session_id // "",
-  .transcript_path // ""
+  .transcript_path // "",
+  .model.id // ""
 ' <<< "$input")
 
 MODEL=${F[0]}              # → L1 model + EFFORT default
@@ -89,9 +91,20 @@ CACHE_CREATE=${F[18]}      # → L3 cache hit + cur write + L2 % numerator (shar
 CUR_INPUT=${F[19]}         # → L3 cache hit + cur in    + L2 % numerator (shared)
 SESSION_ID=${F[20]}        # → L3 session id + today tracker + last-prompt lookup
 TRANSCRIPT_PATH=${F[21]}   # → L4 agents/tools/todos
+MODEL_ID=${F[22]}          # → EFFORT per-model lookup
 
 # ── Effort / thinking level (from settings.json) ──────────────
-EFFORT=$(jq -r '.effortLevel // empty' "$HOME/.claude/settings.json" 2>/dev/null)
+# Two places hold it, and the per-model one wins: picking an effort while a
+# model is selected writes modelSettings.<id>.effortLevel, leaving the
+# top-level effortLevel at whatever it was — so reading only the top level
+# shows the effort of a model the session is not on.
+#
+# The id is the canonical one settings.json keys on; a deployment suffix the
+# runtime may report (claude-opus-5[1m]) is not part of it.
+_model_id=${MODEL_ID%%[*}
+EFFORT=$(jq -r --arg id "$_model_id" \
+  '.modelSettings[$id].effortLevel // .effortLevel // empty' \
+  "$HOME/.claude/settings.json" 2>/dev/null)
 if [ -z "$EFFORT" ]; then
   # Default per model
   case "$MODEL" in

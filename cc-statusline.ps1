@@ -7,6 +7,7 @@
 #   [x] active   [ ] block currently commented out (paired-disable candidate)
 #
 #   Model              .model.display_name                         -> L1 model badge + Effort default lookup
+#   ModelId            .model.id                                   -> Effort per-model lookup
 #   Dir                .workspace.current_dir                      -> L1 cwd (PS1-style, ~-collapsed) + repo hyperlink
 #   Cost               .cost.total_cost_usd                        -> L2 cost + today-cost tracker
 #   Pct                .context_window.used_percentage              -> L2 context bar + % label (fallback only; recomputed vs CtxEff)
@@ -127,6 +128,7 @@ try { $Json = $rawInput | ConvertFrom-Json } catch { $Json = [PSCustomObject]@{}
 
 $Model = $Json.model.display_name
 if ([string]::IsNullOrEmpty($Model)) { $Model = 'Claude' }
+$ModelId = $Json.model.id
 $Dir = $Json.workspace.current_dir
 $Cost = $Json.cost.total_cost_usd
 if ($null -eq $Cost) { $Cost = 0 }
@@ -160,10 +162,24 @@ $UserName = if ($env:USER) { $env:USER } elseif ($env:USERNAME) { $env:USERNAME 
 $TranscriptPath = $Json.transcript_path
 
 # ── Effort / thinking level (from settings.json) ──────────────
+# Two places hold it, and the per-model one wins: picking an effort while a
+# model is selected writes modelSettings.<id>.effortLevel and leaves the
+# top-level effortLevel at whatever it was — so reading only the top level
+# shows the effort of a model the session is not on.
+#
+# The id is the canonical one settings.json keys on; a deployment suffix the
+# runtime may report (claude-opus-5[1m]) is not part of it.
 $SettingsPath = "$HOME/.claude/settings.json"
 $Effort = $null
 if (Test-Path $SettingsPath) {
-    try { $Effort = (Get-Content $SettingsPath -Raw | ConvertFrom-Json).effortLevel } catch {}
+    try {
+        $Settings = Get-Content $SettingsPath -Raw | ConvertFrom-Json
+        $BaseModelId = ($ModelId -split '\[')[0]
+        if ($BaseModelId -and $Settings.modelSettings) {
+            $Effort = $Settings.modelSettings.$BaseModelId.effortLevel
+        }
+        if ([string]::IsNullOrEmpty($Effort)) { $Effort = $Settings.effortLevel }
+    } catch {}
 }
 if ([string]::IsNullOrEmpty($Effort)) {
     if ($Model -match 'Opus') { $Effort = 'medium' }

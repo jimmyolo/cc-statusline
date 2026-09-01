@@ -283,6 +283,45 @@ check "(link) branch slash survives" \
 check "(link) detached HEAD → cwd link only" \
   '[ "$(link https://github.com/o/r.git b >/dev/null; git -C "$REPO_TMP" checkout -q --detach HEAD; cd "$REPO_TMP" && bash "$SCRIPT" < "$SAMPLE" 2>/dev/null | head -1 | grep -oP '"'"'\x1b\]8;;\K[^\x07]+'"'"' | tail -1)" = "file:///home/jimmy/projects/conex/jj" ]'
 
+# ── Sixth pass: the effort label, against a crafted settings.json ──────────
+# Effort is read from settings.json, not from stdin, so these point HOME at a
+# scratch copy rather than the machine's own — which also keeps the cost
+# tracker and account lookup out of the real one.
+echo
+echo "Running effort-label cases…"
+HOME_TMP=$(mktemp -d)
+trap 'rm -rf "$HOME_TMP"' EXIT
+mkdir -p "$HOME_TMP/.claude"
+cat > "$HOME_TMP/.claude/settings.json" <<'JSON'
+{
+  "effortLevel": "medium",
+  "modelSettings": { "claude-opus-5": { "effortLevel": "low" } }
+}
+JSON
+
+effort() {  # $1 = model id (may be empty); echoes the L1 model badge
+  printf '%s' "{\"model\":{\"id\":\"$1\",\"display_name\":\"Opus 5 (1M context)\"},
+    \"workspace\":{\"current_dir\":\"$HOME_TMP\"},
+    \"context_window\":{\"used_percentage\":10,\"context_window_size\":1000000},
+    \"session_id\":\"effort-test\"}" \
+    | HOME="$HOME_TMP" bash "$SCRIPT" 2>/dev/null \
+    | head -1 | sed -E 's/\x1b\[[0-9;]*[a-zA-Z]//g' | sed -E 's/ \|.*//'
+}
+
+# Choosing an effort while a model is selected writes it under that model and
+# leaves the top-level value stale, so the per-model one has to win.
+check "(effort) per-model beats top-level" \
+  '[ "$(effort claude-opus-5)" = "Opus 5 (1M context) (L)" ]'
+# The runtime may report a deployment suffix settings.json does not key on.
+check "(effort) deployment suffix stripped" \
+  '[ "$(effort "claude-opus-5[1m]")" = "Opus 5 (1M context) (L)" ]'
+# A model with no entry of its own still gets the top-level value.
+check "(effort) unlisted model falls back" \
+  '[ "$(effort claude-sonnet-5)" = "Opus 5 (1M context) (M)" ]'
+# ...as does a payload with no id at all, which is what every older one is.
+check "(effort) missing id falls back" \
+  '[ "$(effort "")" = "Opus 5 (1M context) (M)" ]'
+
 echo
 echo "Result: $pass passed, $fail failed."
 [ "$fail" -eq 0 ]
