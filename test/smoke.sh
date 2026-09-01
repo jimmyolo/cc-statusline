@@ -292,20 +292,26 @@ echo "Running effort-label cases…"
 HOME_TMP=$(mktemp -d)
 trap 'rm -rf "$HOME_TMP"' EXIT
 mkdir -p "$HOME_TMP/.claude"
-cat > "$HOME_TMP/.claude/settings.json" <<'JSON'
-{
-  "effortLevel": "medium",
-  "modelSettings": { "claude-opus-5": { "effortLevel": "low" } }
-}
-JSON
+SETTINGS_DEFAULT='{ "effortLevel": "medium",
+                    "modelSettings": { "claude-opus-5": { "effortLevel": "low" } } }'
 
-effort() {  # $1 = model id (may be empty); echoes the L1 model badge
+effort() {  # $1 = model id (may be empty), $2 = settings.json (default above)
+  printf '%s' "${2:-$SETTINGS_DEFAULT}" > "$HOME_TMP/.claude/settings.json"
   printf '%s' "{\"model\":{\"id\":\"$1\",\"display_name\":\"Opus 5 (1M context)\"},
     \"workspace\":{\"current_dir\":\"$HOME_TMP\"},
     \"context_window\":{\"used_percentage\":10,\"context_window_size\":1000000},
     \"session_id\":\"effort-test\"}" \
     | HOME="$HOME_TMP" bash "$SCRIPT" 2>/dev/null \
     | head -1 | sed -E 's/\x1b\[[0-9;]*[a-zA-Z]//g' | sed -E 's/ \|.*//'
+}
+
+effort_raw() {  # same, ANSI intact — the colour is part of what is asserted
+  printf '%s' "${2:-$SETTINGS_DEFAULT}" > "$HOME_TMP/.claude/settings.json"
+  printf '%s' "{\"model\":{\"id\":\"$1\",\"display_name\":\"Opus 5 (1M context)\"},
+    \"workspace\":{\"current_dir\":\"$HOME_TMP\"},
+    \"context_window\":{\"used_percentage\":10,\"context_window_size\":1000000},
+    \"session_id\":\"effort-test\"}" \
+    | HOME="$HOME_TMP" bash "$SCRIPT" 2>/dev/null | head -1
 }
 
 # Choosing an effort while a model is selected writes it under that model and
@@ -321,6 +327,17 @@ check "(effort) unlisted model falls back" \
 # ...as does a payload with no id at all, which is what every older one is.
 check "(effort) missing id falls back" \
   '[ "$(effort "")" = "Opus 5 (1M context) (M)" ]'
+# Settings that answer for no effort at all get no guess. A per-model default
+# standing in for the real value is exactly what hid a stale one behind a
+# plausible (M), so the badge says it does not know — and says it in red.
+check "(effort) no setting reads unknown" \
+  '[ "$(effort claude-opus-5 "{}")" = "Opus 5 (1M context) (unknown)" ]'
+check "(effort) unknown is painted red" \
+  '[ -n "$(effort_raw claude-opus-5 "{}" | grep -F "$(printf "\033[31m\033[1m(unknown)")")" ]'
+# A level outside the four prints as itself rather than vanishing into a blank
+# badge — `auto` is a real value the settings can hold.
+check "(effort) unrecognised level prints itself" \
+  '[ "$(effort claude-opus-5 "{\"effortLevel\":\"auto\"}")" = "Opus 5 (1M context) (auto)" ]'
 
 echo
 echo "Result: $pass passed, $fail failed."

@@ -105,24 +105,25 @@ _model_id=${MODEL_ID%%[*}
 EFFORT=$(jq -r --arg id "$_model_id" \
   '.modelSettings[$id].effortLevel // .effortLevel // empty' \
   "$HOME/.claude/settings.json" 2>/dev/null)
-if [ -z "$EFFORT" ]; then
-  # Default per model
-  case "$MODEL" in
-    *Opus*) EFFORT=medium ;;
-    *)      EFFORT=high ;;
-  esac
-fi
+# Nothing here guesses. A missing value reads `unknown` and a value outside the
+# four levels prints as itself, so a badge that looks wrong points at the
+# setting rather than at a default standing in for it — which is what hid a
+# stale top-level effortLevel behind a plausible-looking (M).
+[ -z "$EFFORT" ] && EFFORT=unknown
 case "$EFFORT" in
   low)    EFFORT_LABEL=L ;;
   medium) EFFORT_LABEL=M ;;
   high)   EFFORT_LABEL=H ;;
   xhigh)  EFFORT_LABEL=xH ;;
-  *)      EFFORT_LABEL="" ;;
+  *)      EFFORT_LABEL=$EFFORT ;;
 esac
 # Only Opus/Sonnet support effort levels
 case "$MODEL" in
   *Opus*|*Sonnet*) MODEL_DISP="${MODEL} (${EFFORT_LABEL})" ;;
-  *)               MODEL_DISP="$MODEL" ;;
+  *)               MODEL_DISP="$MODEL"
+                   # Every model whose name says nothing about effort. Say so
+                   # rather than printing a bare name that reads as "fine".
+                   [ "$EFFORT" = unknown ] && MODEL_DISP="${MODEL} (unknown)" ;;
 esac
 
 # ── Today cost tracker ────────────────────────────────────────
@@ -636,7 +637,13 @@ fi
 # LINE 1: Model + user:cwd + branch:commit + git stats + Vim + Account
 # INPUTS: MODEL_DISP PWD_LINK BRANCH_LINK GIT_COMMIT GIT_STATS VIM_MODE ACCOUNT
 # ══════════════════════════════════════════════════════════════
-L1="${CYAN}${BOLD}${MODEL_DISP}${RESET}"
+# An effort the settings do not answer for is painted red inside the badge:
+# silence here is what let a stale value pass as a real one for weeks.
+if [ "$EFFORT" = unknown ]; then
+  L1="${CYAN}${BOLD}${MODEL_DISP% (unknown)}${RESET} ${RED}${BOLD}(unknown)${RESET}"
+else
+  L1="${CYAN}${BOLD}${MODEL_DISP}${RESET}"
+fi
 # [ -n "$VERSION" ] && L1="${L1} ${DIM}v${VERSION}${RESET}"   # Hidden per AJ-25 — uncomment to re-enable Claude Code version.
 
 # ── Project state, mirroring the shell prompt: user:cwd  branch:commit (M A D +N -N) ──

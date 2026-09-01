@@ -181,19 +181,24 @@ if (Test-Path $SettingsPath) {
         if ([string]::IsNullOrEmpty($Effort)) { $Effort = $Settings.effortLevel }
     } catch {}
 }
-if ([string]::IsNullOrEmpty($Effort)) {
-    if ($Model -match 'Opus') { $Effort = 'medium' }
-    else { $Effort = 'high' }
-}
+# Nothing here guesses. A missing value reads 'unknown' and a value outside the
+# four levels prints as itself, so a badge that looks wrong points at the
+# setting rather than at a default standing in for it — which is what hid a
+# stale top-level effortLevel behind a plausible-looking (M).
+if ([string]::IsNullOrEmpty($Effort)) { $Effort = 'unknown' }
 $EffortLabel = switch ($Effort) {
     'low' { 'L' }
     'medium' { 'M' }
     'high' { 'H' }
     'xhigh' { 'xH' }
-    default { '' }
+    default { $Effort }
 }
 if ($Model -match 'Opus|Sonnet') {
     $ModelDisp = "$Model ($EffortLabel)"
+} elseif ($Effort -eq 'unknown') {
+    # Every model whose name says nothing about effort. Say so rather than
+    # printing a bare name that reads as "fine".
+    $ModelDisp = "$Model (unknown)"
 } else {
     $ModelDisp = $Model
 }
@@ -638,7 +643,14 @@ if ($AcctEmail) {
 # ══════════════════════════════════════════════════════════════
 # LINE 1: Model + user:cwd + branch:commit + git stats + Vim + Account
 # ══════════════════════════════════════════════════════════════
-$L1 = "${Cyan}${Bold}${ModelDisp}${Reset}"
+# An effort the settings do not answer for is painted red inside the badge:
+# silence here is what let a stale value pass as a real one for weeks.
+if ($Effort -eq 'unknown') {
+    $ModelName = $ModelDisp -replace ' \(unknown\)$', ''
+    $L1 = "${Cyan}${Bold}${ModelName}${Reset} ${Red}${Bold}(unknown)${Reset}"
+} else {
+    $L1 = "${Cyan}${Bold}${ModelDisp}${Reset}"
+}
 
 # Project state, mirroring the shell prompt: user:cwd  branch:commit (M A D +N -N)
 $L1 += "${Sep}${Magenta}${Bold}${UserName}${Reset}${Dim}:${Reset}${Bold}${Green}${PwdLink}${Reset}"
