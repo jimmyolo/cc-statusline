@@ -168,6 +168,16 @@ wt_branch_link() {
     | grep -oP '\x1b\]8;;\K[^\x07]+' | tail -1
 }
 check "(git) worktree branch → its own dir"    '[ "$(wt_branch_link "$REPO_TMP/../wt-$$")" = "file://$(cd "$REPO_TMP/../wt-$$" && pwd)" ]'
+# A session launched in a worktree reports the worktree as its project root, so
+# the collapse to the main checkout has to happen here or the long path is back.
+wt_path_link() {  # $1 = worktree dir, reported as both cwd and project root
+  local d
+  d=$(cd "$1" && pwd)
+  jq --arg d "$d" '.workspace.project_dir = $d | .workspace.current_dir = $d' "$SAMPLE" \
+    | ( cd "$d" && bash "$SCRIPT" 2>/dev/null ) \
+    | head -1 | grep -oP '\x1b\]8;;\K[^\x07]+' | head -1
+}
+check "(git) worktree path → main checkout"    '[ "$(wt_path_link "$REPO_TMP/../wt-$$")" = "file://$(cd "$REPO_TMP" && pwd)" ]'
 
 # ── Fourth pass: CLAUDE_AUTOCOMPACT_PCT_OVERRIDE ───────────────────────────
 # The bar divides by the override'd budget, so a wrong parse is invisible in the

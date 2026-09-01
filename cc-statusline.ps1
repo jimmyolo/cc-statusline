@@ -556,10 +556,18 @@ if ($IsWorktree -and $Toplevel) {
 # nothing about which project it is, and inside a worktree the cwd sits under
 # .claude/worktrees/<name>, which says where the checkout lives rather than what
 # it holds. Claude reports the root it was launched on, so it is read rather than
-# derived; older versions that do not send it fall back to the cwd. The tau glyph
-# already carries "this is a worktree", and the branch name links to the worktree
-# directory itself for whoever wants the real location.
+# derived; older versions that do not send it fall back to the cwd.
+#
+# A session launched inside a worktree reports that worktree AS its project root,
+# which is the long path this avoids everywhere else, so the linked-worktree case
+# collapses to the main checkout — the project is the same one either way. The tau
+# glyph already carries "this is a worktree", and the branch name links to the
+# worktree directory itself for whoever wants the real location.
 $PwdAbs = $(if ([string]::IsNullOrEmpty($ProjectDir)) { $Dir } else { $ProjectDir })
+if ($IsWorktree -and $Toplevel -and $PwdAbs -and
+    ($PwdAbs -eq $Toplevel -or $PwdAbs.StartsWith("$Toplevel/") -or $PwdAbs.StartsWith("$Toplevel\"))) {
+    $PwdAbs = $RevDirs[1] -replace '[\\/]\.git$', ''
+}
 
 $PwdDisp = $PwdAbs
 if ($HOME -and $PwdDisp) {
