@@ -333,8 +333,29 @@ effort_raw() {  # same, ANSI intact — the colour is part of what is asserted
     | HOME="$HOME_TMP" bash "$SCRIPT" 2>/dev/null | head -1
 }
 
-# Choosing an effort while a model is selected writes it under that model and
-# leaves the top-level value stale, so the per-model one has to win.
+# The runtime says what it is running at, and that beats anything the file says:
+# settings edited mid-session, or /effort, leave the file describing a level the
+# session is not on.
+effort_payload() {  # $1 = .effort.level, $2 = settings.json (default above)
+  printf '%s' "${2:-$SETTINGS_DEFAULT}" > "$HOME_TMP/.claude/settings.json"
+  printf '%s' "{\"model\":{\"id\":\"claude-opus-5\",\"display_name\":\"Opus 5 (1M context)\"},
+    \"effort\":{\"level\":\"$1\"},
+    \"workspace\":{\"current_dir\":\"$HOME_TMP\"},
+    \"context_window\":{\"used_percentage\":10,\"context_window_size\":1000000},
+    \"session_id\":\"effort-test\"}" \
+    | HOME="$HOME_TMP" bash "$SCRIPT" 2>/dev/null \
+    | head -1 | sed -E 's/\x1b\[[0-9;]*[a-zA-Z]//g' | sed -E 's/ \|.*//'
+}
+check "(effort) payload beats settings" \
+  '[ "$(effort_payload high)" = "Opus 5 (high)" ]'
+# ...including when the file has nothing to say at all.
+check "(effort) payload without settings" \
+  '[ "$(effort_payload xhigh "{}")" = "Opus 5 (xhigh)" ]'
+
+# Everything below sends no .effort.level, which is every Claude Code older than
+# the field — the settings.json inference is what is left, and its two levels
+# keep their order: choosing an effort while a model is selected writes it under
+# that model and leaves the top-level value stale, so the per-model one wins.
 check "(effort) per-model beats top-level" \
   '[ "$(effort claude-opus-5)" = "Opus 5 (low)" ]'
 # The runtime may report a deployment suffix settings.json does not key on.
