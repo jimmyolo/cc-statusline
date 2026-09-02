@@ -46,7 +46,10 @@ echo
 check "non-empty output"               '[ -n "$out" ]'
 check "at least 3 lines"               '[ "$(printf "%s\n" "$plain" | wc -l)" -ge 3 ]'
 check "contains model name"            'grep -q "Opus 4.7" <<< "$plain"'
-check "contains 1M context label"      'grep -q "1M" <<< "$plain"'
+# The model badge no longer carries the deployment variant, so the window is
+# named once, on L2, as the effective budget the bar divides by.
+check "no context variant in the badge" '! grep -q "1M context" <<< "$plain"'
+check "contains ctx window label"      'grep -qE "[0-9]+% [0-9.]+[KM]" <<< "$(printf "%s\n" "$plain" | sed -n 2p)"'
 check "version hidden (AJ-25)"         '! grep -q "v1.2.3" <<< "$plain"'
 check "contains session cost"          'grep -q "\$1.23" <<< "$plain"'
 check "contains today cost label"      'grep -qF "(today \$" <<< "$plain"'
@@ -83,7 +86,7 @@ check "L1 path is the project root"    '! grep -q "conex/jj/src" <<< "$plain"'
 # Older Claude versions send no project_dir; the cwd is what is left to show.
 check "no project_dir falls back to cwd" \
   'jq "del(.workspace.project_dir)" "$SAMPLE" | bash "$SCRIPT" 2>/dev/null | grep -q "conex/jj/src"'
-check "L1 carries user:cwd"            'grep -qE "\| [^ :]+:[~/][^ ]* " <<< "$(printf "%s\n" "$plain" | sed -n 1p)"'
+check "L1 carries user:project"        'grep -qE "\| [^ :]+:[^ :|]+ git:\\(" <<< "$(printf "%s\n" "$plain" | sed -n 1p)"'
 check "account shows email only"       '! grep -qE "👤 [^ ]+ · " <<< "$plain"'
 
 # ── Second pass: with a real transcript that has active agents/tools/todos ──
@@ -143,7 +146,7 @@ label() {  # $1 = revision to check out; echoes L1's branch:commit token
   git -C "$REPO_TMP" checkout -q "$1"
   ( cd "$REPO_TMP" && bash "$SCRIPT" < "$SAMPLE" 2>/dev/null ) \
     | sed -E 's/\x1b\[[0-9;]*[a-zA-Z]//g; s/\x1b\]8;;[^\x07]*\x07//g' \
-    | head -1 | grep -oP '\x{e0a0} \K[^ |]+'
+    | head -1 | grep -oP '\x{e0a0} \K[^ |)]+'
 }
 
 check "(git) detached at origin ref → ref name" '[[ "$(label main~0)" =~ ^origin/main:[0-9a-f]+$ ]]'
@@ -333,27 +336,27 @@ effort_raw() {  # same, ANSI intact — the colour is part of what is asserted
 # Choosing an effort while a model is selected writes it under that model and
 # leaves the top-level value stale, so the per-model one has to win.
 check "(effort) per-model beats top-level" \
-  '[ "$(effort claude-opus-5)" = "Opus 5 (1M context) (L)" ]'
+  '[ "$(effort claude-opus-5)" = "Opus 5 (low)" ]'
 # The runtime may report a deployment suffix settings.json does not key on.
 check "(effort) deployment suffix stripped" \
-  '[ "$(effort "claude-opus-5[1m]")" = "Opus 5 (1M context) (L)" ]'
+  '[ "$(effort "claude-opus-5[1m]")" = "Opus 5 (low)" ]'
 # A model with no entry of its own still gets the top-level value.
 check "(effort) unlisted model falls back" \
-  '[ "$(effort claude-sonnet-5)" = "Opus 5 (1M context) (M)" ]'
+  '[ "$(effort claude-sonnet-5)" = "Opus 5 (medium)" ]'
 # ...as does a payload with no id at all, which is what every older one is.
 check "(effort) missing id falls back" \
-  '[ "$(effort "")" = "Opus 5 (1M context) (M)" ]'
+  '[ "$(effort "")" = "Opus 5 (medium)" ]'
 # Settings that answer for no effort at all get no guess. A per-model default
 # standing in for the real value is exactly what hid a stale one behind a
 # plausible (M), so the badge says it does not know — and says it in red.
 check "(effort) no setting reads unknown" \
-  '[ "$(effort claude-opus-5 "{}")" = "Opus 5 (1M context) (unknown)" ]'
+  '[ "$(effort claude-opus-5 "{}")" = "Opus 5 (unknown)" ]'
 check "(effort) unknown is painted red" \
   '[ -n "$(effort_raw claude-opus-5 "{}" | grep -F "$(printf "\033[31m\033[1m(unknown)")")" ]'
 # A level outside the four prints as itself rather than vanishing into a blank
 # badge — `auto` is a real value the settings can hold.
 check "(effort) unrecognised level prints itself" \
-  '[ "$(effort claude-opus-5 "{\"effortLevel\":\"auto\"}")" = "Opus 5 (1M context) (auto)" ]'
+  '[ "$(effort claude-opus-5 "{\"effortLevel\":\"auto\"}")" = "Opus 5 (auto)" ]'
 
 echo
 echo "Result: $pass passed, $fail failed."

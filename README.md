@@ -10,7 +10,7 @@ Two equivalent implementations, pick whichever fits your platform:
 ## Sample output
 
 ```
-Opus 4.7 (1M context) (H) | jimmy:~/Projects/ajent  main:f97c9bf (5M 1A +16 -8) | NOR | 👤 v***@gmail.com
+Opus 4.7 (high) | jimmy:ajent git:( main:f97c9bf) (5M 1A +16 -8) | NOR | 👤 v***@gmail.com
 ●●●◐●●●●●● 35% 987K | $1.23 (today $5.67) | 5h 23% (2h 14m) | 7d 57% (5d 8h)
 cache 97% | in: 123.4K out: 7.8K | api wait 30m 00s (50%) | +42 -7 lines | #4f1c8e02-… | tools Read,Bash
 todos 3/7 fix smoke test | 14:23 ❯ update README sample output
@@ -82,9 +82,9 @@ Both scripts read the same 22 fields from the JSON Claude Code pipes to `statusL
 
 | Field | JSON path | Displayed in |
 |---|---|---|
-| `MODEL` | `.model.display_name` | L1 model badge |
+| `MODEL` | `.model.display_name` | L1 model badge (a trailing `(1M context)`-style variant is dropped) |
 | `DIR` | `.workspace.current_dir` | L1 path fallback when `project_dir` is absent |
-| `PROJECT_DIR` | `.workspace.project_dir` | L1 project root (`~`-collapsed) + `file://` hyperlink |
+| `PROJECT_DIR` | `.workspace.project_dir` | L1 project root (name only) + `file://` hyperlink |
 | `COST` | `.cost.total_cost_usd` | L2 cost + today tracker |
 | `PCT` | `.context_window.used_percentage` | L2 context bar (fallback only — recomputed against `CTX_EFF`) |
 | `CTX_SIZE` | `.context_window.context_window_size` | `CTX_EFF` → L2 window label + `%` denominator |
@@ -113,7 +113,7 @@ The full mapping (with paired-disable annotations) lives at the top of [`cc-stat
 
 ### Project state
 
-L1's middle field mirrors the shell prompt — `user:path  branch:commit (M A D +N -N)`, same colors and the same U+E0A0 branch glyph a Powerline-style `PS1` uses — `τ` instead of that glyph when the checkout is a linked worktree — so it reads as the prompt already being scanned rather than as a second, differently-shaped one. The path is the full `~`-collapsed **project root** Claude reports in `workspace.project_dir`, not the cwd: a session that wanders into a subdirectory still shows the project it is working on, and inside a worktree the path stays the checkout Claude was launched on rather than `…/.claude/worktrees/<name>`. A session *launched* inside a worktree reports that worktree as its project root, so that case collapses to the main checkout — the project is the same one either way. A Claude version old enough not to send the field falls back to the cwd. The worktree glyph keys on `git rev-parse --git-dir` differing from `--git-common-dir`, read in the same single `rev-parse` that already answers the git-dir, toplevel and short-hash questions — no extra process; `τ` says which checkout this is, and the branch name links to the worktree directory for whoever wants the real location. The parenthesised group is live working-tree state (modified / added / deleted files, then staged+unstaged line diff); it drops out entirely on a clean tree. Session-cumulative `+N -N lines` from the cost JSON is a separate field on L3.
+L1's middle field mirrors the shell prompt — `user:project git:( branch:commit) (M A D +N -N)`, same colors and the same U+E0A0 branch glyph a Powerline-style `PS1` uses — `τ` instead of that glyph when the checkout is a linked worktree — so it reads as the prompt already being scanned rather than as a second, differently-shaped one. The path is the **name** of the project root Claude reports in `workspace.project_dir` — the last component only, with the full absolute path one hover away in its link — not the cwd: a session that wanders into a subdirectory still shows the project it is working on, and inside a worktree the path stays the checkout Claude was launched on rather than `…/.claude/worktrees/<name>`. A session *launched* inside a worktree reports that worktree as its project root, so that case collapses to the main checkout — the project is the same one either way. A Claude version old enough not to send the field falls back to the cwd. The git half is bracketed as `git:(…)` the way a zsh prompt theme does, since a bare project name no longer shows where it stops and the branch begins; outside a repository the whole group drops out. The worktree glyph keys on `git rev-parse --git-dir` differing from `--git-common-dir`, read in the same single `rev-parse` that already answers the git-dir, toplevel and short-hash questions — no extra process; `τ` says which checkout this is, and the branch name links to the worktree directory for whoever wants the real location. The parenthesised group is live working-tree state (modified / added / deleted files, then staged+unstaged line diff); it drops out entirely on a clean tree. Session-cumulative `+N -N lines` from the cost JSON is a separate field on L3.
 
 ### Session id
 

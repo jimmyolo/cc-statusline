@@ -113,16 +113,18 @@ EFFORT=$(jq -r --arg id "$_model_id" \
 # setting rather than at a default standing in for it — which is what hid a
 # stale top-level effortLevel behind a plausible-looking (M).
 [ -z "$EFFORT" ] && EFFORT=unknown
-case "$EFFORT" in
-  low)    EFFORT_LABEL=L ;;
-  medium) EFFORT_LABEL=M ;;
-  high)   EFFORT_LABEL=H ;;
-  xhigh)  EFFORT_LABEL=xH ;;
-  *)      EFFORT_LABEL=$EFFORT ;;
-esac
+# The level is spelled out. An initial saved four characters and cost a lookup
+# every time — L against low is not a trade worth making on a line read all day.
+#
+# The display name carries a deployment variant in parentheses ("Opus 5 (1M
+# context)"), which the effort badge then sits behind. Only one parenthesis
+# belongs on a badge, so the suffix is dropped and the name is just the model.
+# What that costs: the nominal window is then nowhere on the line — L2 names the
+# effective budget the bar divides by, which a reserve makes a different number.
+MODEL=${MODEL%% (*}
 # Only Opus/Sonnet support effort levels
 case "$MODEL" in
-  *Opus*|*Sonnet*) MODEL_DISP="${MODEL} (${EFFORT_LABEL})" ;;
+  *Opus*|*Sonnet*) MODEL_DISP="${MODEL} (${EFFORT})" ;;
   *)               MODEL_DISP="$MODEL"
                    # Every model whose name says nothing about effort. Say so
                    # rather than printing a bare name that reads as "fine".
@@ -555,11 +557,12 @@ if [ "$IS_WORKTREE" -eq 1 ] && [ -n "$_toplevel" ] && [ -n "$_gitcommondir" ]; t
   esac
 fi
 
-PWD_DISP="$PWD_ABS"
-case "$PWD_DISP" in
-  "$HOME")   PWD_DISP="~" ;;
-  "$HOME"/*) PWD_DISP="~${PWD_DISP#$HOME}" ;;
-esac
+# Only the last component is shown: the root's full path is one hover away in
+# the link, and the parent directories say where a project is kept rather than
+# which one it is — the part of the line that has to be read at a glance.
+PWD_DISP=${PWD_ABS##*/}
+[ "$PWD_ABS" = "$HOME" ] && PWD_DISP="~"
+[ -z "$PWD_DISP" ] && PWD_DISP="$PWD_ABS"
 PWD_LINK="$PWD_DISP"
 if [ -n "$PWD_ABS" ]; then
   _d_enc=$(urlenc_path "$PWD_ABS")
@@ -655,13 +658,17 @@ else
 fi
 # [ -n "$VERSION" ] && L1="${L1} ${DIM}v${VERSION}${RESET}"   # Hidden per AJ-25 — uncomment to re-enable Claude Code version.
 
-# ── Project state, mirroring the shell prompt: user:cwd  branch:commit (M A D +N -N) ──
+# ── Project state, mirroring the shell prompt: user:project git:( branch:commit) (M A D +N -N) ──
 # Same shape as ~/.bashrc's PS1 (magenta user, green path, dim  branch:hash), so
 # the statusline reads as the prompt the user already scans.
 L1="${L1}${SEP}${MAGENTA}${BOLD}${USER_NAME}${RESET}${DIM}:${RESET}${BOLD}${GREEN}${PWD_LINK}${RESET}"
+# git:(…) brackets the git half the way a zsh prompt theme does. With the path
+# down to a bare name, the glyph alone no longer says where the name stops and
+# the branch begins.
 if [ -n "$BRANCH" ]; then
-  L1="${L1} ${WHITE}${GIT_GLYPH}${RESET} ${WHITE}${BRANCH_LINK}${RESET}"
+  L1="${L1} ${DIM}git:(${RESET}${WHITE}${GIT_GLYPH}${RESET} ${WHITE}${BRANCH_LINK}${RESET}"
   [ -n "$GIT_COMMIT" ] && L1="${L1}${DIM}:${RESET}${MAGENTA}${GIT_COMMIT}${RESET}"
+  L1="${L1}${DIM})${RESET}"
 fi
 
 # Working-tree stats — suppress zero categories, drop the whole group when clean.
