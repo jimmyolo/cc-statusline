@@ -22,8 +22,9 @@ unset CC_STATUSLINE_FORGE CC_STATUSLINE_WEB_PORT
 # effort pass, and exported for every case: the script reads the cost tracker,
 # settings.json and the account file out of $HOME on every render, so any case
 # left on the real one writes the sample session's $1.23 into the machine's own
-# tracker. The per-case HOME="$HOME_TMP" prefixes further down are now redundant
-# but kept — they document the dependency where it is used.
+# tracker. The per-case HOME="$HOME_TMP" prefixes further down are redundant
+# under this export and carry no meaning — a case without one reads $HOME just
+# as hard.
 HOME_TMP=$(mktemp -d)
 mkdir -p "$HOME_TMP/.claude"
 export HOME="$HOME_TMP"
@@ -140,7 +141,10 @@ check "(active) contains current todo"      'grep -q "second" <<< "$plain2"'
 echo
 echo "Running branch-label cases in a scratch repo…"
 REPO_TMP=$(mktemp -d -t cc-statusline-smoke.XXXXXX)
-trap 'rm -f "$TRANSCRIPT_TMP"; rm -rf "$REPO_TMP" "$REPO_TMP/../wt-$$" "$HOME_TMP"' EXIT
+# The worktree comes first: rm -rf takes its operands left to right, so removing
+# $REPO_TMP first would leave the "$REPO_TMP/.." component non-existent and the
+# worktree behind on every run.
+trap 'rm -f "$TRANSCRIPT_TMP"; rm -rf "$REPO_TMP/../wt-$$" "$REPO_TMP" "$HOME_TMP"' EXIT
 (
   cd "$REPO_TMP"
   git init -q -b main
@@ -203,6 +207,20 @@ subdir_path_link() {  # cwd is the subdir; project root is still the checkout
     | head -1 | grep -oP '\x1b\]8;;\K[^\x07]+' | head -1
 }
 check "(git) subdir path → checkout root"      '[ "$(subdir_path_link)" = "file://$(cd "$REPO_TMP" && pwd)" ]'
+# Same subdirectory, reached through a symlink. git prints its absolute dir from
+# getcwd(), so the comparison that clears the case above has to be physical on
+# both halves — resolving logically compares /real/.git against /link/.git and
+# the τ glyph plus the `..` root come straight back.
+LINK_TMP=$HOME_TMP/link   # inside the scratch HOME so the existing trap takes it
+ln -s "$REPO_TMP" "$LINK_TMP"
+symlink_path_link() {  # cwd reached via the symlink; project_dir is the real root
+  jq --arg r "$(cd "$REPO_TMP" && pwd)" --arg d "$LINK_TMP/sub/deeper" \
+     '.workspace.project_dir = $r | .workspace.current_dir = $d' "$SAMPLE" \
+    | ( cd "$LINK_TMP/sub/deeper" && bash "$SCRIPT" 2>/dev/null ) \
+    | head -1 | grep -oP '\x1b\]8;;\K[^\x07]+' | head -1
+}
+check "(git) symlinked subdir → branch glyph"  '[ "$(glyph "$LINK_TMP/sub/deeper")" = "$GLYPH_BRANCH" ]'
+check "(git) symlinked subdir path → root"     '[ "$(symlink_path_link)" = "file://$(cd "$REPO_TMP" && pwd)" ]'
 
 # ── Fourth pass: CLAUDE_AUTOCOMPACT_PCT_OVERRIDE ───────────────────────────
 # The bar divides by the override'd budget, so a wrong parse is invisible in the

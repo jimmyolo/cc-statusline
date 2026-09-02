@@ -466,7 +466,11 @@ IS_WORKTREE=0
 # inside git, but it needs git 2.31+, and older git echoes an unknown flag on
 # stdout instead of failing, which shifts every read above by one line.
 if [ -n "$_gitdir" ] && [ "$_gitdir" != "$_gitcommondir" ]; then
-  [ "$(cd "$_gitdir" 2>/dev/null && pwd)" = "$(cd "$_gitcommondir" 2>/dev/null && pwd)" ] || IS_WORKTREE=1
+  # -P on both halves, because git prints its absolute form from getcwd(), which
+  # is physical. A logical `pwd` resolves against $PWD, so a checkout reached
+  # through a symlink would compare a physical path against a logical one and
+  # land right back on the false worktree this whole block exists to prevent.
+  [ "$(cd -P "$_gitdir" 2>/dev/null && pwd -P)" = "$(cd -P "$_gitcommondir" 2>/dev/null && pwd -P)" ] || IS_WORKTREE=1
 fi
 GIT_GLYPH=$BRANCH_GLYPH
 [ "$IS_WORKTREE" -eq 1 ] && GIT_GLYPH=$WORKTREE_GLYPH

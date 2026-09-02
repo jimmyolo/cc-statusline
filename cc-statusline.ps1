@@ -456,6 +456,7 @@ $OnBranch = $false
 $RevDirs = @(& git rev-parse --git-dir --git-common-dir --show-toplevel 2>$null)
 $IsGit = ($RevDirs.Count -ge 2)
 $IsWorktree = $false
+$CommonDirFull = if ($RevDirs.Count -ge 2) { $RevDirs[1] } else { '' }
 if ($IsGit -and ($RevDirs[0] -ne $RevDirs[1])) {
     $GitDirFull = (Resolve-Path -LiteralPath $RevDirs[0] -ErrorAction SilentlyContinue).Path
     $CommonDirFull = (Resolve-Path -LiteralPath $RevDirs[1] -ErrorAction SilentlyContinue).Path
@@ -586,7 +587,10 @@ if ($IsWorktree -and $Toplevel) {
 $PwdAbs = $(if ([string]::IsNullOrEmpty($ProjectDir)) { $Dir } else { $ProjectDir })
 if ($IsWorktree -and $Toplevel -and $PwdAbs -and
     ($PwdAbs -eq $Toplevel -or $PwdAbs.StartsWith("$Toplevel/") -or $PwdAbs.StartsWith("$Toplevel\"))) {
-    $PwdAbs = $RevDirs[1] -replace '[\\/]\.git$', ''
+    # The resolved dir, not $RevDirs[1] — git prints the common dir relative when
+    # the two spellings differ, and a relative one here shows the project root as
+    # `..`.
+    $PwdAbs = $CommonDirFull -replace '[\\/]\.git$', ''
 }
 
 # Only the last component is shown: the root's full path is one hover away in
