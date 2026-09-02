@@ -203,15 +203,9 @@ if ([string]::IsNullOrEmpty($Effort)) { $Effort = 'unknown' }
 # What that costs: the nominal window is then nowhere on the line - L2 names the
 # effective budget the bar divides by, which a reserve makes a different number.
 $Model = $Model -replace ' \(.*$', ''
-if ($Model -match 'Opus|Sonnet') {
-    $ModelDisp = "$Model ($Effort)"
-} elseif ($Effort -eq 'unknown') {
-    # Every model whose name says nothing about effort. Say so rather than
-    # printing a bare name that reads as "fine".
-    $ModelDisp = "$Model (unknown)"
-} else {
-    $ModelDisp = $Model
-}
+# Every model gets the badge. An Opus/Sonnet allowlist once decided who did,
+# and hid the level Fable and Haiku were reporting behind a bare name.
+$ModelDisp = "$Model ($Effort)"
 
 # ── Today cost tracker ────────────────────────────────────────
 # Mirror of cc-statusline.sh: track each session's running cost.total_cost_usd

@@ -133,14 +133,9 @@ fi
 # What that costs: the nominal window is then nowhere on the line — L2 names the
 # effective budget the bar divides by, which a reserve makes a different number.
 MODEL=${MODEL%% (*}
-# Only Opus/Sonnet support effort levels
-case "$MODEL" in
-  *Opus*|*Sonnet*) MODEL_DISP="${MODEL} (${EFFORT})" ;;
-  *)               MODEL_DISP="$MODEL"
-                   # Every model whose name says nothing about effort. Say so
-                   # rather than printing a bare name that reads as "fine".
-                   [ "$EFFORT" = unknown ] && MODEL_DISP="${MODEL} (unknown)" ;;
-esac
+# Every model gets the badge. An Opus/Sonnet allowlist once decided who did,
+# and hid the level Fable and Haiku were reporting behind a bare name.
+MODEL_DISP="${MODEL} (${EFFORT})"
 
 # ── Today cost tracker ────────────────────────────────────────
 # Mirror of claude-dashboard's per-session aggregation: track each session's

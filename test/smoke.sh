@@ -336,9 +336,9 @@ effort_raw() {  # same, ANSI intact — the colour is part of what is asserted
 # The runtime says what it is running at, and that beats anything the file says:
 # settings edited mid-session, or /effort, leave the file describing a level the
 # session is not on.
-effort_payload() {  # $1 = .effort.level, $2 = settings.json (default above)
+effort_payload() {  # $1 = .effort.level, $2 = settings.json (default above), $3 = display_name
   printf '%s' "${2:-$SETTINGS_DEFAULT}" > "$HOME_TMP/.claude/settings.json"
-  printf '%s' "{\"model\":{\"id\":\"claude-opus-5\",\"display_name\":\"Opus 5 (1M context)\"},
+  printf '%s' "{\"model\":{\"id\":\"claude-opus-5\",\"display_name\":\"${3:-Opus 5 (1M context)}\"},
     \"effort\":{\"level\":\"$1\"},
     \"workspace\":{\"current_dir\":\"$HOME_TMP\"},
     \"context_window\":{\"used_percentage\":10,\"context_window_size\":1000000},
@@ -351,6 +351,11 @@ check "(effort) payload beats settings" \
 # ...including when the file has nothing to say at all.
 check "(effort) payload without settings" \
   '[ "$(effort_payload xhigh "{}")" = "Opus 5 (xhigh)" ]'
+
+# The badge is not gated on the model name: a Fable or Haiku session that
+# reports a level shows it, same as Opus.
+check "(effort) badge on a non-Opus/Sonnet model" \
+  '[ "$(effort_payload medium "{}" "Fable 5.1")" = "Fable 5.1 (medium)" ]'
 
 # Everything below sends no .effort.level, which is every Claude Code older than
 # the field — the settings.json inference is what is left, and its two levels
