@@ -83,6 +83,7 @@ Both scripts read the same 22 fields from the JSON Claude Code pipes to `statusL
 | Field | JSON path | Displayed in |
 |---|---|---|
 | `MODEL` | `.model.display_name` | L1 model badge (a trailing `(1M context)`-style variant is dropped) |
+| `EFFORT_IN` | `.effort.level` | L1 effort badge — the level the runtime reports it is running at, falling back to `~/.claude/settings.json` on a Claude Code that predates the field |
 | `DIR` | `.workspace.current_dir` | L1 path fallback when `project_dir` is absent |
 | `PROJECT_DIR` | `.workspace.project_dir` | L1 project root (name only) + `file://` hyperlink |
 | `COST` | `.cost.total_cost_usd` | L2 cost + today tracker |

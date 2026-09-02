@@ -7,7 +7,8 @@
 #   [x] active   [ ] block currently commented out (paired-disable candidate)
 #
 #   Model              .model.display_name                         -> L1 model badge + Effort default lookup
-#   ModelId            .model.id                                   -> Effort per-model lookup
+#   ModelId            .model.id                                   -> Effort per-model lookup (settings.json fallback only)
+#   Effort             .effort.level                               -> L1 effort badge
 #   Dir                .workspace.current_dir                      -> L1 path fallback when ProjectDir is absent
 #   ProjectDir         .workspace.project_dir                      -> L1 project root (PS1-style, ~-collapsed) + file:// hyperlink
 #   Cost               .cost.total_cost_usd                        -> L2 cost + today-cost tracker
@@ -163,17 +164,22 @@ $WorktreeGlyph = [char]0x03C4
 $UserName = if ($env:USER) { $env:USER } elseif ($env:USERNAME) { $env:USERNAME } else { '' }
 $TranscriptPath = $Json.transcript_path
 
-# ── Effort / thinking level (from settings.json) ──────────────
-# Two places hold it, and the per-model one wins: picking an effort while a
-# model is selected writes modelSettings.<id>.effortLevel and leaves the
+# ── Effort / thinking level ───────────────────────────────────
+# The runtime reports the level it is actually running at, in the payload, so
+# that is what the badge shows. Reading settings.json only ever inferred it:
+# the file says what was configured, and a session started before an edit, or
+# switched with /effort, is running something else.
+$Effort = $Json.effort.level
+# A Claude Code old enough not to send the field leaves the inference behind.
+# Two places hold it there, and the per-model one wins: picking an effort while
+# a model is selected writes modelSettings.<id>.effortLevel and leaves the
 # top-level effortLevel at whatever it was — so reading only the top level
 # shows the effort of a model the session is not on.
 #
 # The id is the canonical one settings.json keys on; a deployment suffix the
 # runtime may report (claude-opus-5[1m]) is not part of it.
 $SettingsPath = "$HOME/.claude/settings.json"
-$Effort = $null
-if (Test-Path $SettingsPath) {
+if ([string]::IsNullOrEmpty($Effort) -and (Test-Path $SettingsPath)) {
     try {
         $Settings = Get-Content $SettingsPath -Raw | ConvertFrom-Json
         $BaseModelId = ($ModelId -split '\[')[0]
@@ -184,19 +190,21 @@ if (Test-Path $SettingsPath) {
     } catch {}
 }
 # Nothing here guesses. A missing value reads 'unknown' and a value outside the
-# four levels prints as itself, so a badge that looks wrong points at the
-# setting rather than at a default standing in for it — which is what hid a
+# four levels prints as itself, so a badge that looks wrong points at the source
+# rather than at a default standing in for it — which is what hid a
 # stale top-level effortLevel behind a plausible-looking (M).
 if ([string]::IsNullOrEmpty($Effort)) { $Effort = 'unknown' }
-$EffortLabel = switch ($Effort) {
-    'low' { 'L' }
-    'medium' { 'M' }
-    'high' { 'H' }
-    'xhigh' { 'xH' }
-    default { $Effort }
-}
+# The level is spelled out. An initial saved four characters and cost a lookup
+# every time - L against low is not a trade worth making on a line read all day.
+#
+# The display name carries a deployment variant in parentheses ("Opus 5 (1M
+# context)"), which the effort badge then sits behind. Only one parenthesis
+# belongs on a badge, so the suffix is dropped and the name is just the model.
+# What that costs: the nominal window is then nowhere on the line - L2 names the
+# effective budget the bar divides by, which a reserve makes a different number.
+$Model = $Model -replace ' \(.*$', ''
 if ($Model -match 'Opus|Sonnet') {
-    $ModelDisp = "$Model ($EffortLabel)"
+    $ModelDisp = "$Model ($Effort)"
 } elseif ($Effort -eq 'unknown') {
     # Every model whose name says nothing about effort. Say so rather than
     # printing a bare name that reads as "fine".
@@ -569,11 +577,15 @@ if ($IsWorktree -and $Toplevel -and $PwdAbs -and
     $PwdAbs = $RevDirs[1] -replace '[\\/]\.git$', ''
 }
 
+# Only the last component is shown: the root's full path is one hover away in
+# the link, and the parent directories say where a project is kept rather than
+# which one it is - the part of the line that has to be read at a glance.
 $PwdDisp = $PwdAbs
-if ($HOME -and $PwdDisp) {
-    if ($PwdDisp -eq $HOME) { $PwdDisp = '~' }
-    elseif ($PwdDisp.StartsWith("$HOME/") -or $PwdDisp.StartsWith("$HOME\")) {
-        $PwdDisp = '~' + $PwdDisp.Substring($HOME.Length)
+if ($PwdDisp) {
+    if ($HOME -and $PwdDisp -eq $HOME) { $PwdDisp = '~' }
+    else {
+        $Leaf = ($PwdDisp -split '[\\/]')[-1]
+        if ($Leaf) { $PwdDisp = $Leaf }
     }
 }
 $PwdLink = $PwdDisp
@@ -659,11 +671,15 @@ if ($Effort -eq 'unknown') {
     $L1 = "${Cyan}${Bold}${ModelDisp}${Reset}"
 }
 
-# Project state, mirroring the shell prompt: user:cwd  branch:commit (M A D +N -N)
+# Project state, mirroring the shell prompt: user:project git:( branch:commit) (M A D +N -N)
 $L1 += "${Sep}${Magenta}${Bold}${UserName}${Reset}${Dim}:${Reset}${Bold}${Green}${PwdLink}${Reset}"
+# git:(...) brackets the git half the way a zsh prompt theme does. With the path
+# down to a bare name, the glyph alone no longer says where the name stops and
+# the branch begins.
 if ($Branch) {
-    $L1 += " ${White}${GitGlyph}${Reset} ${White}${BranchLink}${Reset}"
+    $L1 += " ${Dim}git:(${Reset}${White}${GitGlyph}${Reset} ${White}${BranchLink}${Reset}"
     if ($GitCommit) { $L1 += "${Dim}:${Reset}${Magenta}${GitCommit}${Reset}" }
+    $L1 += "${Dim})${Reset}"
 }
 
 # Working-tree stats — suppress zero categories, drop the whole group when clean.

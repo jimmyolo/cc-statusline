@@ -6,7 +6,8 @@
 #   ✅ active   ❌ block currently commented out (paired-disable candidate)
 #
 #   F[ 0] MODEL              .model.display_name                         → L1 model badge + EFFORT default lookup
-#   F[22] MODEL_ID           .model.id                                   → EFFORT per-model lookup
+#   F[22] MODEL_ID           .model.id                                   → EFFORT per-model lookup (settings.json fallback only)
+#   F[24] EFFORT_IN          .effort.level                               → L1 effort badge
 #   F[ 1] DIR                .workspace.current_dir                      → L1 path fallback when project_dir is absent
 #   F[23] PROJECT_DIR        .workspace.project_dir                      → L1 project root (PS1-style, ~-collapsed) + file:// hyperlink
 #   F[ 2] COST               .cost.total_cost_usd                        → L2 cost + today-cost tracker
@@ -68,7 +69,8 @@ readarray -t F < <(jq -r '
   .session_id // "",
   .transcript_path // "",
   .model.id // "",
-  .workspace.project_dir // ""
+  .workspace.project_dir // "",
+  .effort.level // ""
 ' <<< "$input")
 
 MODEL=${F[0]}              # → L1 model + EFFORT default
@@ -95,23 +97,32 @@ SESSION_ID=${F[20]}        # → L3 session id + today tracker + last-prompt loo
 TRANSCRIPT_PATH=${F[21]}   # → L4 agents/tools/todos
 MODEL_ID=${F[22]}          # → EFFORT per-model lookup
 PROJECT_DIR=${F[23]}       # → L1 project root + file:// hyperlink
+EFFORT_IN=${F[24]}         # → L1 effort badge
 
-# ── Effort / thinking level (from settings.json) ──────────────
-# Two places hold it, and the per-model one wins: picking an effort while a
-# model is selected writes modelSettings.<id>.effortLevel, leaving the
+# ── Effort / thinking level ───────────────────────────────────
+# The runtime reports the level it is actually running at, in the payload, so
+# that is what the badge shows. Reading settings.json only ever inferred it:
+# the file says what was configured, and a session started before an edit, or
+# switched with /effort, is running something else.
+EFFORT=$EFFORT_IN
+# A Claude Code old enough not to send the field leaves the inference behind.
+# Two places hold it there, and the per-model one wins: picking an effort while
+# a model is selected writes modelSettings.<id>.effortLevel, leaving the
 # top-level effortLevel at whatever it was — so reading only the top level
 # shows the effort of a model the session is not on.
 #
 # The id is the canonical one settings.json keys on; a deployment suffix the
 # runtime may report (claude-opus-5[1m]) is not part of it.
-_model_id=${MODEL_ID%%[*}
-EFFORT=$(jq -r --arg id "$_model_id" \
-  '.modelSettings[$id].effortLevel // .effortLevel // empty' \
-  "$HOME/.claude/settings.json" 2>/dev/null)
+if [ -z "$EFFORT" ]; then
+  _model_id=${MODEL_ID%%[*}
+  EFFORT=$(jq -r --arg id "$_model_id" \
+    '.modelSettings[$id].effortLevel // .effortLevel // empty' \
+    "$HOME/.claude/settings.json" 2>/dev/null)
+fi
 # Nothing here guesses. A missing value reads `unknown` and a value outside the
-# four levels prints as itself, so a badge that looks wrong points at the
-# setting rather than at a default standing in for it — which is what hid a
-# stale top-level effortLevel behind a plausible-looking (M).
+# four levels prints as itself, so a badge that looks wrong points at the source
+# rather than at a default standing in for it — which is what hid a stale
+# top-level effortLevel behind a plausible-looking (M).
 [ -z "$EFFORT" ] && EFFORT=unknown
 # The level is spelled out. An initial saved four characters and cost a lookup
 # every time — L against low is not a trade worth making on a line read all day.
