@@ -18,6 +18,16 @@ unset CLAUDE_AUTOCOMPACT_PCT_OVERRIDE
 unset CLAUDE_CODE_AUTO_COMPACT_WINDOW
 unset CC_STATUSLINE_FORGE CC_STATUSLINE_WEB_PORT
 
+# The scratch HOME is created here rather than beside its first heavy user, the
+# effort pass, and exported for every case: the script reads the cost tracker,
+# settings.json and the account file out of $HOME on every render, so any case
+# left on the real one writes the sample session's $1.23 into the machine's own
+# tracker. The per-case HOME="$HOME_TMP" prefixes further down are now redundant
+# but kept — they document the dependency where it is used.
+HOME_TMP=$(mktemp -d)
+mkdir -p "$HOME_TMP/.claude"
+export HOME="$HOME_TMP"
+
 fail=0
 pass=0
 check() {
@@ -130,7 +140,7 @@ check "(active) contains current todo"      'grep -q "second" <<< "$plain2"'
 echo
 echo "Running branch-label cases in a scratch repo…"
 REPO_TMP=$(mktemp -d -t cc-statusline-smoke.XXXXXX)
-trap 'rm -f "$TRANSCRIPT_TMP"; rm -rf "$REPO_TMP" "$REPO_TMP/../wt-$$"' EXIT
+trap 'rm -f "$TRANSCRIPT_TMP"; rm -rf "$REPO_TMP" "$REPO_TMP/../wt-$$" "$HOME_TMP"' EXIT
 (
   cd "$REPO_TMP"
   git init -q -b main
@@ -155,7 +165,7 @@ check "(git) on a branch → branch name"         '[[ "$(label main)" =~ ^main:[
 # The glyph before the branch says which checkout this is:  in a normal one,
 # τ in a linked worktree. Same repo, so only the glyph may differ.
 glyph() {  # $1 = directory to render from; echoes the glyph before the branch
-  ( cd "$1" && bash "$SCRIPT" < "$SAMPLE" 2>/dev/null ) \
+  ( cd "$1" && HOME="$HOME_TMP" bash "$SCRIPT" < "$SAMPLE" 2>/dev/null ) \
     | sed -E 's/\x1b\[[0-9;]*[a-zA-Z]//g; s/\x1b\]8;;[^\x07]*\x07//g' \
     | head -1 | grep -oP '\S(?= \S+:[0-9a-f]+)'
 }
@@ -189,7 +199,7 @@ check "(git) subdir of checkout → branch glyph" '[ "$(glyph "$REPO_TMP/sub/dee
 subdir_path_link() {  # cwd is the subdir; project root is still the checkout
   jq --arg r "$(cd "$REPO_TMP" && pwd)" --arg d "$(cd "$REPO_TMP/sub/deeper" && pwd)" \
      '.workspace.project_dir = $r | .workspace.current_dir = $d' "$SAMPLE" \
-    | ( cd "$REPO_TMP/sub/deeper" && bash "$SCRIPT" 2>/dev/null ) \
+    | ( cd "$REPO_TMP/sub/deeper" && HOME="$HOME_TMP" bash "$SCRIPT" 2>/dev/null ) \
     | head -1 | grep -oP '\x1b\]8;;\K[^\x07]+' | head -1
 }
 check "(git) subdir path → checkout root"      '[ "$(subdir_path_link)" = "file://$(cd "$REPO_TMP" && pwd)" ]'
@@ -320,9 +330,6 @@ check "(link) detached HEAD → cwd link only" \
 # tracker and account lookup out of the real one.
 echo
 echo "Running effort-label cases…"
-HOME_TMP=$(mktemp -d)
-trap 'rm -rf "$HOME_TMP"' EXIT
-mkdir -p "$HOME_TMP/.claude"
 SETTINGS_DEFAULT='{ "effortLevel": "medium",
                     "modelSettings": { "claude-opus-5": { "effortLevel": "low" } } }'
 
