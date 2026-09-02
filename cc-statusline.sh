@@ -163,12 +163,15 @@ if [ -n "$SESSION_ID" ]; then
     | (. as $s | (.sessions | to_entries | map(.value) | add) | tostring + "\t" + ($s | tojson))
   ' <<< "$_tracker_state" 2>/dev/null) || TODAY_COST=$(
     jq -nr --arg today "$TODAY" --arg sid "$SESSION_ID" --argjson cost "$COST" \
-      '{date: $today, sessions: {($sid): $cost}} | ($cost | tostring) + "\t" + tojson'
+      '{date: $today, sessions: {($sid): $cost}} | ($cost | tostring) + "\t" + tojson' 2>/dev/null
   )
   # Persist new state, keep total
   TODAY_TOTAL=${TODAY_COST%%$'\t'*}
   TODAY_STATE=${TODAY_COST#*$'\t'}
-  printf '%s' "$TODAY_STATE" > "$TRACKER"
+  # A non-numeric cost in the payload fails both jq calls, and writing that empty
+  # result back would truncate the tracker. Degrade to $0.00 for this render and
+  # leave the file alone.
+  [ -n "$TODAY_STATE" ] && printf '%s' "$TODAY_STATE" > "$TRACKER"
   TODAY_COST=$TODAY_TOTAL
 fi
 
