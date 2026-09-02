@@ -446,7 +446,11 @@ $Branch = ''
 $OnBranch = $false
 # The two dirs differ only in a linked worktree (.git/worktrees/<name> against
 # .git), which is what picks the branch glyph and rewrites the displayed path.
-$RevDirs = @(& git rev-parse --git-dir --git-common-dir --show-toplevel 2>$null)
+# --path-format=absolute is load-bearing: from a subdirectory of an ordinary
+# checkout git prints --git-dir absolute but --git-common-dir relative
+# (`../.git`), so the comparison below saw two different strings and every such
+# session rendered as a worktree whose project root collapsed to `..`.
+$RevDirs = @(& git rev-parse --path-format=absolute --git-dir --git-common-dir --show-toplevel 2>$null)
 $IsGit = ($RevDirs.Count -ge 2)
 $IsWorktree = ($IsGit -and ($RevDirs[0] -ne $RevDirs[1]))
 $Toplevel = if ($RevDirs.Count -ge 3) { $RevDirs[2] } else { '' }

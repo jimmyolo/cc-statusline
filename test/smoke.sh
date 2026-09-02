@@ -181,6 +181,18 @@ wt_path_link() {  # $1 = worktree dir, reported as both cwd and project root
     | head -1 | grep -oP '\x1b\]8;;\K[^\x07]+' | head -1
 }
 check "(git) worktree path → main checkout"    '[ "$(wt_path_link "$REPO_TMP/../wt-$$")" = "file://$(cd "$REPO_TMP" && pwd)" ]'
+# From a SUBDIRECTORY of an ordinary checkout git prints --git-dir absolute but
+# --git-common-dir relative (`../.git`), which used to read as a worktree and
+# collapse the shown project root to `..`. Both assertions guard that pair.
+mkdir -p "$REPO_TMP/sub/deeper"
+check "(git) subdir of checkout → branch glyph" '[ "$(glyph "$REPO_TMP/sub/deeper")" = "$GLYPH_BRANCH" ]'
+subdir_path_link() {  # cwd is the subdir; project root is still the checkout
+  jq --arg r "$(cd "$REPO_TMP" && pwd)" --arg d "$(cd "$REPO_TMP/sub/deeper" && pwd)" \
+     '.workspace.project_dir = $r | .workspace.current_dir = $d' "$SAMPLE" \
+    | ( cd "$REPO_TMP/sub/deeper" && bash "$SCRIPT" 2>/dev/null ) \
+    | head -1 | grep -oP '\x1b\]8;;\K[^\x07]+' | head -1
+}
+check "(git) subdir path → checkout root"      '[ "$(subdir_path_link)" = "file://$(cd "$REPO_TMP" && pwd)" ]'
 
 # ── Fourth pass: CLAUDE_AUTOCOMPACT_PCT_OVERRIDE ───────────────────────────
 # The bar divides by the override'd budget, so a wrong parse is invisible in the
@@ -378,6 +390,33 @@ check "(effort) unknown is painted red" \
 # badge — `auto` is a real value the settings can hold.
 check "(effort) unrecognised level prints itself" \
   '[ "$(effort claude-opus-5 "{\"effortLevel\":\"auto\"}")" = "Opus 5 (auto)" ]'
+
+# ── Seventh pass: the today-cost tracker ──────────────────────────────────
+# An empty tracker file used to stay empty: jq reading it printed nothing and
+# exited 0, the empty output was written straight back, and the total read
+# $0.00 forever. Both the shown total and the persisted state are asserted.
+echo
+echo "Running today-cost cases…"
+today_cost() {  # $1 = starting tracker file content; echoes the (today $X.XX) label
+  printf '%s' "$1" > "$HOME_TMP/.claude/cc-statusline-cost.json"
+  printf '%s' '{"model":{"display_name":"Opus 5"},
+    "workspace":{"current_dir":"'"$HOME_TMP"'"},
+    "cost":{"total_cost_usd":1.25},
+    "context_window":{"used_percentage":10,"context_window_size":1000000},
+    "session_id":"cost-test"}' \
+    | HOME="$HOME_TMP" bash "$SCRIPT" 2>/dev/null \
+    | sed -n 2p | sed -E 's/\x1b\[[0-9;]*[a-zA-Z]//g' | grep -oP '\(today \$[0-9.]+\)'
+}
+
+check "(cost) empty tracker still totals"   '[ "$(today_cost "")" = "(today \$1.25)" ]'
+check "(cost) corrupt tracker still totals" '[ "$(today_cost "not json")" = "(today \$1.25)" ]'
+check "(cost) tracker is persisted"         'today_cost "" >/dev/null; [ "$(jq -r ".sessions[\"cost-test\"]" "$HOME_TMP/.claude/cc-statusline-cost.json")" = "1.25" ]'
+# Another session's spend today is summed in, not overwritten.
+check "(cost) other sessions summed" \
+  '[ "$(today_cost "{\"date\":\"$(date +%Y-%m-%d)\",\"sessions\":{\"other\":2.00}}")" = "(today \$3.25)" ]'
+# Yesterday's file is discarded rather than carried forward.
+check "(cost) stale date resets" \
+  '[ "$(today_cost "{\"date\":\"1999-01-01\",\"sessions\":{\"other\":2.00}}")" = "(today \$1.25)" ]'
 
 echo
 echo "Result: $pass passed, $fail failed."

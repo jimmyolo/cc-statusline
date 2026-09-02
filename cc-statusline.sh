@@ -149,11 +149,17 @@ TRACKER=$HOME/.claude/cc-statusline-cost.json
 printf -v TODAY '%(%Y-%m-%d)T' -1
 TODAY_COST=0
 if [ -n "$SESSION_ID" ]; then
+  # An empty or corrupt tracker has to become {} here rather than in the pipeline
+  # below: jq reading an empty file prints nothing and still exits 0, so the ||
+  # fallback never fired, the empty state was written straight back, and the
+  # total stayed $0.00 for good.
+  _tracker_state=$(jq -e . "$TRACKER" 2>/dev/null)
+  [ -n "$_tracker_state" ] || _tracker_state='{}'
   TODAY_COST=$(jq -r --arg today "$TODAY" --arg sid "$SESSION_ID" --argjson cost "$COST" '
     (if (.date // "") != $today then {date: $today, sessions: {}} else . end)
     | .sessions[$sid] = $cost
     | (. as $s | (.sessions | to_entries | map(.value) | add) | tostring + "\t" + ($s | tojson))
-  ' "$TRACKER" 2>/dev/null || echo -e "0\t{\"date\":\"$TODAY\",\"sessions\":{\"$SESSION_ID\":$COST}}")
+  ' <<< "$_tracker_state")
   # Persist new state, keep total
   TODAY_TOTAL=${TODAY_COST%%$'\t'*}
   TODAY_STATE=${TODAY_COST#*$'\t'}
@@ -439,8 +445,12 @@ GIT_COMMIT=""
 #
 # The two dirs differ only in a linked worktree (.git/worktrees/<name> against
 # .git), which is what picks the branch glyph and rewrites the displayed path.
+# is load-bearing: from a subdirectory of an ordinary
+# checkout git prints --git-dir absolute but --git-common-dir relative
+# (`../.git`), so the comparison below saw two different strings and every such
+# session rendered as a worktree whose project root collapsed to `..`.
 { read -r _gitdir; read -r _gitcommondir; read -r _toplevel; read -r GIT_COMMIT; } < <(
-  git rev-parse --git-dir --git-common-dir --show-toplevel --short HEAD 2>/dev/null
+  git rev-parse --path-format=absolute --git-dir --git-common-dir --show-toplevel --short HEAD 2>/dev/null
 )
 [ -n "$_gitdir" ] && IS_GIT=1
 IS_WORKTREE=0
