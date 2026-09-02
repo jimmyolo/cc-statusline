@@ -149,11 +149,22 @@ TRACKER=$HOME/.claude/cc-statusline-cost.json
 printf -v TODAY '%(%Y-%m-%d)T' -1
 TODAY_COST=0
 if [ -n "$SESSION_ID" ]; then
+  # An empty tracker has to become {} before jq sees it: jq reading an empty file
+  # prints nothing and still exits 0, so the || fallback never fired, the empty
+  # state was written straight back, and the total stayed $0.00 for good. Any
+  # other malformed content still reaches jq and takes the fallback, which builds
+  # its JSON with --arg instead of interpolating the payload into a string.
+  _tracker_state=
+  [ -r "$TRACKER" ] && _tracker_state=$(<"$TRACKER")
+  [ -n "$_tracker_state" ] || _tracker_state='{}'
   TODAY_COST=$(jq -r --arg today "$TODAY" --arg sid "$SESSION_ID" --argjson cost "$COST" '
     (if (.date // "") != $today then {date: $today, sessions: {}} else . end)
     | .sessions[$sid] = $cost
     | (. as $s | (.sessions | to_entries | map(.value) | add) | tostring + "\t" + ($s | tojson))
-  ' "$TRACKER" 2>/dev/null || echo -e "0\t{\"date\":\"$TODAY\",\"sessions\":{\"$SESSION_ID\":$COST}}")
+  ' <<< "$_tracker_state" 2>/dev/null) || TODAY_COST=$(
+    jq -nr --arg today "$TODAY" --arg sid "$SESSION_ID" --argjson cost "$COST" \
+      '{date: $today, sessions: {($sid): $cost}} | ($cost | tostring) + "\t" + tojson'
+  )
   # Persist new state, keep total
   TODAY_TOTAL=${TODAY_COST%%$'\t'*}
   TODAY_STATE=${TODAY_COST#*$'\t'}
@@ -444,7 +455,16 @@ GIT_COMMIT=""
 )
 [ -n "$_gitdir" ] && IS_GIT=1
 IS_WORKTREE=0
-[ -n "$_gitdir" ] && [ "$_gitdir" != "$_gitcommondir" ] && IS_WORKTREE=1
+# Git resolves each dir independently, so from a subdirectory of an ordinary
+# checkout it prints --git-dir absolute and --git-common-dir relative
+# (`../.git`) — two spellings of one directory. Comparing the raw strings made
+# every such session a worktree whose project root collapsed to `..`; only a
+# real mismatch pays for resolving them. --path-format=absolute would do this
+# inside git, but it needs git 2.31+, and older git echoes an unknown flag on
+# stdout instead of failing, which shifts every read above by one line.
+if [ -n "$_gitdir" ] && [ "$_gitdir" != "$_gitcommondir" ]; then
+  [ "$(cd "$_gitdir" 2>/dev/null && pwd)" = "$(cd "$_gitcommondir" 2>/dev/null && pwd)" ] || IS_WORKTREE=1
+fi
 GIT_GLYPH=$BRANCH_GLYPH
 [ "$IS_WORKTREE" -eq 1 ] && GIT_GLYPH=$WORKTREE_GLYPH
 [ "$IS_GIT" -eq 1 ] && BRANCH="$(git branch --show-current 2>/dev/null)"

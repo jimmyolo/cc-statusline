@@ -446,9 +446,21 @@ $Branch = ''
 $OnBranch = $false
 # The two dirs differ only in a linked worktree (.git/worktrees/<name> against
 # .git), which is what picks the branch glyph and rewrites the displayed path.
+# Git resolves each dir independently, so from a subdirectory of an ordinary
+# checkout it prints --git-dir absolute and --git-common-dir relative
+# (`../.git`) — two spellings of one directory. Comparing the raw strings made
+# every such session a worktree whose project root collapsed to `..`; only a
+# real mismatch pays for resolving them. --path-format=absolute would do this
+# inside git, but it needs git 2.31+, and older git echoes an unknown flag on
+# stdout instead of failing, which shifts every element of $RevDirs by one.
 $RevDirs = @(& git rev-parse --git-dir --git-common-dir --show-toplevel 2>$null)
 $IsGit = ($RevDirs.Count -ge 2)
-$IsWorktree = ($IsGit -and ($RevDirs[0] -ne $RevDirs[1]))
+$IsWorktree = $false
+if ($IsGit -and ($RevDirs[0] -ne $RevDirs[1])) {
+    $GitDirFull = (Resolve-Path -LiteralPath $RevDirs[0] -ErrorAction SilentlyContinue).Path
+    $CommonDirFull = (Resolve-Path -LiteralPath $RevDirs[1] -ErrorAction SilentlyContinue).Path
+    $IsWorktree = ($GitDirFull -ne $CommonDirFull)
+}
 $Toplevel = if ($RevDirs.Count -ge 3) { $RevDirs[2] } else { '' }
 $GitGlyph = if ($IsWorktree) { $WorktreeGlyph } else { $BranchGlyph }
 if ($IsGit) {
