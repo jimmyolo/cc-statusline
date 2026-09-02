@@ -445,7 +445,7 @@ GIT_COMMIT=""
 #
 # The two dirs differ only in a linked worktree (.git/worktrees/<name> against
 # .git), which is what picks the branch glyph and rewrites the displayed path.
-# is load-bearing: from a subdirectory of an ordinary
+# --path-format=absolute is load-bearing: from a subdirectory of an ordinary
 # checkout git prints --git-dir absolute but --git-common-dir relative
 # (`../.git`), so the comparison below saw two different strings and every such
 # session rendered as a worktree whose project root collapsed to `..`.
