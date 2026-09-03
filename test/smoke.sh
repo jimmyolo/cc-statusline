@@ -389,6 +389,14 @@ check "(today) second session adds to the first" \
 check "(today) tracker holds both sessions" \
   '[ "$(jq -r ".sessions|length" "$TRACKER_TMP")" = 2 ]'
 
+# Valid JSON of the wrong shape makes jq exit with no output. That must leave
+# the tracker as it was, not replace it with an empty file.
+printf '{"date":"%s","sessions":{"a":"oops"}}' "$(date +%F)" > "$TRACKER_TMP"
+check "(today) jq failure shows 0 rather than a guess" \
+  '[ "$(today s1 1.50)" = "today \$0.00" ]'
+check "(today) jq failure leaves the tracker untouched" \
+  '[ "$(jq -r ".sessions.a" "$TRACKER_TMP")" = oops ]'
+
 # Everything below sends no .effort.level, which is every Claude Code older than
 # the field — the settings.json inference is what is left, and its two levels
 # keep their order: choosing an effort while a model is selected writes it under
