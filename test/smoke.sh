@@ -357,6 +357,38 @@ check "(effort) payload without settings" \
 check "(effort) badge on a non-Opus/Sonnet model" \
   '[ "$(effort_payload medium "{}" "Fable 5.1")" = "Fable 5.1 (medium)" ]'
 
+# ── Today-cost tracker, against a crafted tracker file ─────────────────────
+# A refresh that lands on an unreadable tracker must start it over, not carry
+# the emptiness forward: jq on an empty file prints nothing and exits 0, which
+# once left today at $0.00 until someone deleted the file by hand.
+today() {  # $1 = session id, $2 = cost.total_cost_usd → the "today $X" figure
+  printf '%s' "{\"model\":{\"display_name\":\"Opus 5\"},\"cost\":{\"total_cost_usd\":$2},
+    \"workspace\":{\"current_dir\":\"$HOME_TMP\"},
+    \"context_window\":{\"used_percentage\":10,\"context_window_size\":1000000},
+    \"session_id\":\"$1\"}" \
+    | HOME="$HOME_TMP" bash "$SCRIPT" 2>/dev/null \
+    | sed -E 's/\x1b\[[0-9;]*[a-zA-Z]//g' | grep -o 'today \$[0-9.]*' | head -1
+}
+TRACKER_TMP=$HOME_TMP/.claude/cc-statusline-cost.json
+
+: > "$TRACKER_TMP"
+check "(today) empty tracker restarts from this session" \
+  '[ "$(today s1 1.50)" = "today \$1.50" ]'
+
+printf '%s' '{"date":"x","sessions":{"a":' > "$TRACKER_TMP"
+check "(today) unparsable tracker restarts from this session" \
+  '[ "$(today s1 1.50)" = "today \$1.50" ]'
+
+rm -f "$TRACKER_TMP"
+check "(today) missing tracker shows this session, not 0" \
+  '[ "$(today s1 1.50)" = "today \$1.50" ]'
+
+check "(today) second session adds to the first" \
+  '[ "$(today s2 0.25)" = "today \$1.75" ]'
+
+check "(today) tracker holds both sessions" \
+  '[ "$(jq -r ".sessions|length" "$TRACKER_TMP")" = 2 ]'
+
 # Everything below sends no .effort.level, which is every Claude Code older than
 # the field — the settings.json inference is what is left, and its two levels
 # keep their order: choosing an effort while a model is selected writes it under

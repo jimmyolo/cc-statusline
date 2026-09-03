@@ -224,7 +224,10 @@ if ($SessionId) {
     if (-not $State['sessions']) { $State['sessions'] = @{} }
     $State['sessions'][$SessionId] = [double]$Cost
     $TodayCost = ($State['sessions'].Values | Measure-Object -Sum).Sum
-    ($State | ConvertTo-Json -Depth 5 -Compress) | Set-Content -Path $Tracker -NoNewline
+    # Written to a sibling and renamed so a refresh running at the same moment
+    # reads either the old or the new state, never a half-written file.
+    ($State | ConvertTo-Json -Depth 5 -Compress) | Set-Content -Path "$Tracker.$PID" -NoNewline
+    Move-Item -Force "$Tracker.$PID" $Tracker
 }
 
 # ── Transcript-derived widgets (agents / tools / todos) ───────
