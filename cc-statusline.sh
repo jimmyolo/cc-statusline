@@ -144,16 +144,32 @@ TRACKER=$HOME/.claude/cc-statusline-cost.json
 printf -v TODAY '%(%Y-%m-%d)T' -1
 TODAY_COST=0
 if [ -n "$SESSION_ID" ]; then
-  TODAY_COST=$(jq -r --arg today "$TODAY" --arg sid "$SESSION_ID" --argjson cost "$COST" '
-    (if (.date // "") != $today then {date: $today, sessions: {}} else . end)
+  # `try input` reads an empty or truncated tracker as {}. jq on an empty file
+  # prints nothing and exits 0, so an `||` fallback never fired there: an empty
+  # tracker (a truncate race between two refreshes) was written back empty on
+  # every refresh and today stayed at $0.00 for good. A missing file is the
+  # line below's job, not the catch's — jq fails to open it before the program
+  # runs; on 1.8 the program still runs and prints, older builds may not.
+  [ -f "$TRACKER" ] || : > "$TRACKER" 2>/dev/null
+  TODAY_COST=$(jq -n -r --arg today "$TODAY" --arg sid "$SESSION_ID" --argjson cost "$COST" '
+    (try input catch {})
+    | (if (.date // "") != $today then {date: $today, sessions: {}} else . end)
     | .sessions[$sid] = $cost
     | (. as $s | (.sessions | to_entries | map(.value) | add) | tostring + "\t" + ($s | tojson))
-  ' "$TRACKER" 2>/dev/null || echo -e "0\t{\"date\":\"$TODAY\",\"sessions\":{\"$SESSION_ID\":$COST}}")
-  # Persist new state, keep total
-  TODAY_TOTAL=${TODAY_COST%%$'\t'*}
-  TODAY_STATE=${TODAY_COST#*$'\t'}
-  printf '%s' "$TODAY_STATE" > "$TRACKER"
-  TODAY_COST=$TODAY_TOTAL
+  ' "$TRACKER" 2>/dev/null)
+  # Persist new state, keep total. Written to a sibling and renamed so a
+  # refresh running at the same moment reads either the old or the new state,
+  # never the empty file a plain `>` leaves open in between. Only a record
+  # jq actually produced is persisted: a tracker whose values are not numbers,
+  # or a payload cost that is not JSON, makes jq exit with no output, and
+  # writing that would empty the file — the state this block exists to avoid.
+  case $TODAY_COST in
+    *$'\t'*)
+      TODAY_STATE=${TODAY_COST#*$'\t'}
+      printf '%s' "$TODAY_STATE" > "$TRACKER.$$" && mv -f "$TRACKER.$$" "$TRACKER"
+      TODAY_COST=${TODAY_COST%%$'\t'*} ;;
+    *) TODAY_COST=0 ;;
+  esac
 fi
 
 # ── Transcript-derived widgets (agents / tools / todos) ───────

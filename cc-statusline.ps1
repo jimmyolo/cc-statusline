@@ -224,7 +224,15 @@ if ($SessionId) {
     if (-not $State['sessions']) { $State['sessions'] = @{} }
     $State['sessions'][$SessionId] = [double]$Cost
     $TodayCost = ($State['sessions'].Values | Measure-Object -Sum).Sum
-    ($State | ConvertTo-Json -Depth 5 -Compress) | Set-Content -Path $Tracker -NoNewline
+    # Written to a sibling and moved into place so a refresh running at the
+    # same moment never reads a half-written file. A write or move that fails
+    # leaves the old tracker as it was and takes its sibling with it.
+    try {
+        ($State | ConvertTo-Json -Depth 5 -Compress) | Set-Content -Path "$Tracker.$PID" -NoNewline -ErrorAction Stop
+        Move-Item -Force "$Tracker.$PID" $Tracker -ErrorAction Stop
+    } catch {
+        Remove-Item -Force "$Tracker.$PID" -ErrorAction SilentlyContinue
+    }
 }
 
 # ── Transcript-derived widgets (agents / tools / todos) ───────
