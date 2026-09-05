@@ -181,6 +181,22 @@ wt_path_link() {  # $1 = worktree dir, reported as both cwd and project root
     | head -1 | grep -oP '\x1b\]8;;\K[^\x07]+' | head -1
 }
 check "(git) worktree path → main checkout"    '[ "$(wt_path_link "$REPO_TMP/../wt-$$")" = "file://$(cd "$REPO_TMP" && pwd)" ]'
+# project_dir is fixed at launch; a session that has since moved out of it (the
+# worktree removed after its merge, cwd back in the main checkout) must show
+# where it is now, not where it started.
+stale_path_link() {  # $1 = cwd (inside a git repo), $2 = stale project_dir
+  local d
+  d=$(cd "$1" && pwd)
+  jq --arg d "$d" --arg p "$2" '.workspace.project_dir = $p | .workspace.current_dir = $d' "$SAMPLE" \
+    | ( cd "$d" && bash "$SCRIPT" 2>/dev/null ) \
+    | head -1 | grep -oP '\x1b\]8;;\K[^\x07]+' | head -1
+}
+check "(git) stale project_dir → cwd git root" '[ "$(stale_path_link "$REPO_TMP" "$REPO_TMP/.claude/worktrees/gone")" = "file://$(cd "$REPO_TMP" && pwd)" ]'
+# From a subdirectory git prints --git-common-dir relative unless asked for an
+# absolute path, which used to flag a plain checkout as a worktree and collapse
+# the fallback to a literal `..`.
+mkdir -p "$REPO_TMP/sub"
+check "(git) stale project_dir, cwd in subdir → cwd git root" '[ "$(stale_path_link "$REPO_TMP/sub" "$REPO_TMP/.claude/worktrees/gone")" = "file://$(cd "$REPO_TMP" && pwd)" ]'
 
 # ── Fourth pass: CLAUDE_AUTOCOMPACT_PCT_OVERRIDE ───────────────────────────
 # The bar divides by the override'd budget, so a wrong parse is invisible in the
