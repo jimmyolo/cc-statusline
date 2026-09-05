@@ -450,8 +450,11 @@ GIT_COMMIT=""
 #
 # The two dirs differ only in a linked worktree (.git/worktrees/<name> against
 # .git), which is what picks the branch glyph and rewrites the displayed path.
+# Absolute on purpose: from a subdirectory git prints --git-common-dir relative
+# (`../.git`) while --git-dir stays absolute, and the two would differ in every
+# plain checkout.
 { read -r _gitdir; read -r _gitcommondir; read -r _toplevel; read -r GIT_COMMIT; } < <(
-  git rev-parse --git-dir --git-common-dir --show-toplevel --short HEAD 2>/dev/null
+  git rev-parse --path-format=absolute --git-dir --git-common-dir --show-toplevel --short HEAD 2>/dev/null
 )
 [ -n "$_gitdir" ] && IS_GIT=1
 IS_WORKTREE=0
@@ -578,7 +581,7 @@ PWD_ABS="${PROJECT_DIR:-$DIR}"
 # reporting the path it started in, so a cwd no longer under project_dir falls
 # back to the cwd's own git root, which is what the branch and commit beside
 # it are read from anyway.
-if [ -n "$_toplevel" ] && [ -n "$PROJECT_DIR" ]; then
+if [ -n "$_toplevel" ] && [ -n "$PROJECT_DIR" ] && [ -n "$DIR" ]; then
   case "$DIR" in
     "$PROJECT_DIR"|"$PROJECT_DIR"/*) ;;
     *) PWD_ABS="$_toplevel" ;;
