@@ -24,7 +24,7 @@ The `agents …` indicator on L3 is dual-mode: **magenta** while subagent(s) are
 
 - `bash` 4+
 - `jq`
-- `bc` (for token K/M formatting)
+- `git` (optional — enables branch / repo-link / diff stats)
 - `git` (optional — enables branch / repo-link / diff stats)
 - A terminal that renders ANSI color + OSC 8 hyperlinks (most modern terminals do)
 

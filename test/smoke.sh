@@ -221,6 +221,22 @@ symlink_path_link() {  # cwd reached via the symlink; project_dir is the real ro
 }
 check "(git) symlinked subdir → branch glyph"  '[ "$(glyph "$LINK_TMP/sub/deeper")" = "$GLYPH_BRANCH" ]'
 check "(git) symlinked subdir path → root"     '[ "$(symlink_path_link)" = "file://$(cd "$REPO_TMP" && pwd)" ]'
+# project_dir is fixed at launch; a session that has since moved out of it (the
+# worktree removed after its merge, cwd back in the main checkout) must show
+# where it is now, not where it started.
+stale_path_link() {  # $1 = cwd (inside a git repo), $2 = stale project_dir
+  local d
+  d=$(cd "$1" && pwd)
+  jq --arg d "$d" --arg p "$2" '.workspace.project_dir = $p | .workspace.current_dir = $d' "$SAMPLE" \
+    | ( cd "$d" && bash "$SCRIPT" 2>/dev/null ) \
+    | head -1 | grep -oP '\x1b\]8;;\K[^\x07]+' | head -1
+}
+check "(git) stale project_dir → cwd git root" '[ "$(stale_path_link "$REPO_TMP" "$REPO_TMP/.claude/worktrees/gone")" = "file://$(cd "$REPO_TMP" && pwd)" ]'
+# From a subdirectory git prints --git-common-dir relative unless asked for an
+# absolute path, which used to flag a plain checkout as a worktree and collapse
+# the fallback to a literal `..`.
+mkdir -p "$REPO_TMP/sub"
+check "(git) stale project_dir, cwd in subdir → cwd git root" '[ "$(stale_path_link "$REPO_TMP/sub" "$REPO_TMP/.claude/worktrees/gone")" = "file://$(cd "$REPO_TMP" && pwd)" ]'
 
 # ── Fourth pass: CLAUDE_AUTOCOMPACT_PCT_OVERRIDE ───────────────────────────
 # The bar divides by the override'd budget, so a wrong parse is invisible in the
@@ -373,9 +389,9 @@ effort_raw() {  # same, ANSI intact — the colour is part of what is asserted
 # The runtime says what it is running at, and that beats anything the file says:
 # settings edited mid-session, or /effort, leave the file describing a level the
 # session is not on.
-effort_payload() {  # $1 = .effort.level, $2 = settings.json (default above)
+effort_payload() {  # $1 = .effort.level, $2 = settings.json (default above), $3 = display_name
   printf '%s' "${2:-$SETTINGS_DEFAULT}" > "$HOME_TMP/.claude/settings.json"
-  printf '%s' "{\"model\":{\"id\":\"claude-opus-5\",\"display_name\":\"Opus 5 (1M context)\"},
+  printf '%s' "{\"model\":{\"id\":\"claude-opus-5\",\"display_name\":\"${3:-Opus 5 (1M context)}\"},
     \"effort\":{\"level\":\"$1\"},
     \"workspace\":{\"current_dir\":\"$HOME_TMP\"},
     \"context_window\":{\"used_percentage\":10,\"context_window_size\":1000000},
@@ -388,6 +404,51 @@ check "(effort) payload beats settings" \
 # ...including when the file has nothing to say at all.
 check "(effort) payload without settings" \
   '[ "$(effort_payload xhigh "{}")" = "Opus 5 (xhigh)" ]'
+
+# The badge is not gated on the model name: a Fable or Haiku session that
+# reports a level shows it, same as Opus.
+check "(effort) badge on a non-Opus/Sonnet model" \
+  '[ "$(effort_payload medium "{}" "Fable 5.1")" = "Fable 5.1 (medium)" ]'
+
+# ── Today-cost tracker, against a crafted tracker file ─────────────────────
+# A refresh that lands on an unreadable tracker must start it over, not carry
+# the emptiness forward: jq on an empty file prints nothing and exits 0, which
+# once left today at $0.00 until someone deleted the file by hand.
+today() {  # $1 = session id, $2 = cost.total_cost_usd → the "today $X" figure
+  printf '%s' "{\"model\":{\"display_name\":\"Opus 5\"},\"cost\":{\"total_cost_usd\":$2},
+    \"workspace\":{\"current_dir\":\"$HOME_TMP\"},
+    \"context_window\":{\"used_percentage\":10,\"context_window_size\":1000000},
+    \"session_id\":\"$1\"}" \
+    | HOME="$HOME_TMP" bash "$SCRIPT" 2>/dev/null \
+    | sed -E 's/\x1b\[[0-9;]*[a-zA-Z]//g' | grep -o 'today \$[0-9.]*' | head -1
+}
+TRACKER_TMP=$HOME_TMP/.claude/cc-statusline-cost.json
+
+: > "$TRACKER_TMP"
+check "(today) empty tracker restarts from this session" \
+  '[ "$(today s1 1.50)" = "today \$1.50" ]'
+
+printf '%s' '{"date":"x","sessions":{"a":' > "$TRACKER_TMP"
+check "(today) unparsable tracker restarts from this session" \
+  '[ "$(today s1 1.50)" = "today \$1.50" ]'
+
+rm -f "$TRACKER_TMP"
+check "(today) missing tracker shows this session, not 0" \
+  '[ "$(today s1 1.50)" = "today \$1.50" ]'
+
+check "(today) second session adds to the first" \
+  '[ "$(today s2 0.25)" = "today \$1.75" ]'
+
+check "(today) tracker holds both sessions" \
+  '[ "$(jq -r ".sessions|length" "$TRACKER_TMP")" = 2 ]'
+
+# Valid JSON of the wrong shape makes jq exit with no output. That must leave
+# the tracker as it was, not replace it with an empty file.
+printf '{"date":"%s","sessions":{"a":"oops"}}' "$(date +%F)" > "$TRACKER_TMP"
+check "(today) jq failure shows 0 rather than a guess" \
+  '[ "$(today s1 1.50)" = "today \$0.00" ]'
+check "(today) jq failure leaves the tracker untouched" \
+  '[ "$(jq -r ".sessions.a" "$TRACKER_TMP")" = oops ]'
 
 # Everything below sends no .effort.level, which is every Claude Code older than
 # the field — the settings.json inference is what is left, and its two levels

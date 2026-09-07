@@ -203,15 +203,9 @@ if ([string]::IsNullOrEmpty($Effort)) { $Effort = 'unknown' }
 # What that costs: the nominal window is then nowhere on the line - L2 names the
 # effective budget the bar divides by, which a reserve makes a different number.
 $Model = $Model -replace ' \(.*$', ''
-if ($Model -match 'Opus|Sonnet') {
-    $ModelDisp = "$Model ($Effort)"
-} elseif ($Effort -eq 'unknown') {
-    # Every model whose name says nothing about effort. Say so rather than
-    # printing a bare name that reads as "fine".
-    $ModelDisp = "$Model (unknown)"
-} else {
-    $ModelDisp = $Model
-}
+# Every model gets the badge. An Opus/Sonnet allowlist once decided who did,
+# and hid the level Fable and Haiku were reporting behind a bare name.
+$ModelDisp = "$Model ($Effort)"
 
 # ── Today cost tracker ────────────────────────────────────────
 # Mirror of cc-statusline.sh: track each session's running cost.total_cost_usd
@@ -230,7 +224,15 @@ if ($SessionId) {
     if (-not $State['sessions']) { $State['sessions'] = @{} }
     $State['sessions'][$SessionId] = [double]$Cost
     $TodayCost = ($State['sessions'].Values | Measure-Object -Sum).Sum
-    ($State | ConvertTo-Json -Depth 5 -Compress) | Set-Content -Path $Tracker -NoNewline
+    # Written to a sibling and moved into place so a refresh running at the
+    # same moment never reads a half-written file. A write or move that fails
+    # leaves the old tracker as it was and takes its sibling with it.
+    try {
+        ($State | ConvertTo-Json -Depth 5 -Compress) | Set-Content -Path "$Tracker.$PID" -NoNewline -ErrorAction Stop
+        Move-Item -Force "$Tracker.$PID" $Tracker -ErrorAction Stop
+    } catch {
+        Remove-Item -Force "$Tracker.$PID" -ErrorAction SilentlyContinue
+    }
 }
 
 # ── Transcript-derived widgets (agents / tools / todos) ───────

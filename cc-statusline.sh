@@ -133,14 +133,9 @@ fi
 # What that costs: the nominal window is then nowhere on the line — L2 names the
 # effective budget the bar divides by, which a reserve makes a different number.
 MODEL=${MODEL%% (*}
-# Only Opus/Sonnet support effort levels
-case "$MODEL" in
-  *Opus*|*Sonnet*) MODEL_DISP="${MODEL} (${EFFORT})" ;;
-  *)               MODEL_DISP="$MODEL"
-                   # Every model whose name says nothing about effort. Say so
-                   # rather than printing a bare name that reads as "fine".
-                   [ "$EFFORT" = unknown ] && MODEL_DISP="${MODEL} (unknown)" ;;
-esac
+# Every model gets the badge. An Opus/Sonnet allowlist once decided who did,
+# and hid the level Fable and Haiku were reporting behind a bare name.
+MODEL_DISP="${MODEL} (${EFFORT})"
 
 # ── Today cost tracker ────────────────────────────────────────
 # Mirror of claude-dashboard's per-session aggregation: track each session's
@@ -149,30 +144,32 @@ TRACKER=$HOME/.claude/cc-statusline-cost.json
 printf -v TODAY '%(%Y-%m-%d)T' -1
 TODAY_COST=0
 if [ -n "$SESSION_ID" ]; then
-  # An empty tracker has to become {} before jq sees it: jq reading an empty file
-  # prints nothing and still exits 0, so the || fallback never fired, the empty
-  # state was written straight back, and the total stayed $0.00 for good. Any
-  # other malformed content still reaches jq and takes the fallback, which builds
-  # its JSON with --arg instead of interpolating the payload into a string.
-  _tracker_state=
-  [ -r "$TRACKER" ] && _tracker_state=$(<"$TRACKER")
-  [ -n "$_tracker_state" ] || _tracker_state='{}'
-  TODAY_COST=$(jq -r --arg today "$TODAY" --arg sid "$SESSION_ID" --argjson cost "$COST" '
-    (if (.date // "") != $today then {date: $today, sessions: {}} else . end)
+  # `try input` reads an empty or truncated tracker as {}. jq on an empty file
+  # prints nothing and exits 0, so an `||` fallback never fired there: an empty
+  # tracker (a truncate race between two refreshes) was written back empty on
+  # every refresh and today stayed at $0.00 for good. A missing file is the
+  # line below's job, not the catch's — jq fails to open it before the program
+  # runs; on 1.8 the program still runs and prints, older builds may not.
+  [ -f "$TRACKER" ] || : > "$TRACKER" 2>/dev/null
+  TODAY_COST=$(jq -n -r --arg today "$TODAY" --arg sid "$SESSION_ID" --argjson cost "$COST" '
+    (try input catch {})
+    | (if (.date // "") != $today then {date: $today, sessions: {}} else . end)
     | .sessions[$sid] = $cost
     | (. as $s | (.sessions | to_entries | map(.value) | add) | tostring + "\t" + ($s | tojson))
-  ' <<< "$_tracker_state" 2>/dev/null) || TODAY_COST=$(
-    jq -nr --arg today "$TODAY" --arg sid "$SESSION_ID" --argjson cost "$COST" \
-      '{date: $today, sessions: {($sid): $cost}} | ($cost | tostring) + "\t" + tojson' 2>/dev/null
-  )
-  # Persist new state, keep total
-  TODAY_TOTAL=${TODAY_COST%%$'\t'*}
-  TODAY_STATE=${TODAY_COST#*$'\t'}
-  # A non-numeric cost in the payload fails both jq calls, and writing that empty
-  # result back would truncate the tracker. Degrade to $0.00 for this render and
-  # leave the file alone.
-  [ -n "$TODAY_STATE" ] && printf '%s' "$TODAY_STATE" > "$TRACKER"
-  TODAY_COST=$TODAY_TOTAL
+  ' "$TRACKER" 2>/dev/null)
+  # Persist new state, keep total. Written to a sibling and renamed so a
+  # refresh running at the same moment reads either the old or the new state,
+  # never the empty file a plain `>` leaves open in between. Only a record
+  # jq actually produced is persisted: a tracker whose values are not numbers,
+  # or a payload cost that is not JSON, makes jq exit with no output, and
+  # writing that would empty the file — the state this block exists to avoid.
+  case $TODAY_COST in
+    *$'\t'*)
+      TODAY_STATE=${TODAY_COST#*$'\t'}
+      printf '%s' "$TODAY_STATE" > "$TRACKER.$$" && mv -f "$TRACKER.$$" "$TRACKER"
+      TODAY_COST=${TODAY_COST%%$'\t'*} ;;
+    *) TODAY_COST=0 ;;
+  esac
 fi
 
 # ── Transcript-derived widgets (agents / tools / todos) ───────
@@ -589,6 +586,17 @@ fi
 # glyph already carries "this is a worktree", and the branch name links to the
 # worktree directory itself for whoever wants the real location.
 PWD_ABS="${PROJECT_DIR:-$DIR}"
+# project_dir is fixed at launch. A session that moves out of it — a worktree
+# removed after its merge, the cwd switched back to the main checkout — keeps
+# reporting the path it started in, so a cwd no longer under project_dir falls
+# back to the cwd's own git root, which is what the branch and commit beside
+# it are read from anyway.
+if [ -n "$_toplevel" ] && [ -n "$PROJECT_DIR" ] && [ -n "$DIR" ]; then
+  case "$DIR" in
+    "$PROJECT_DIR"|"$PROJECT_DIR"/*) ;;
+    *) PWD_ABS="$_toplevel" ;;
+  esac
+fi
 if [ "$IS_WORKTREE" -eq 1 ] && [ -n "$_toplevel" ] && [ -n "$_gitcommondir" ]; then
   case "$PWD_ABS" in
     "$_toplevel"|"$_toplevel"/*) PWD_ABS="${_gitcommondir%/.git}" ;;
