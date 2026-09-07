@@ -450,15 +450,25 @@ GIT_COMMIT=""
 #
 # The two dirs differ only in a linked worktree (.git/worktrees/<name> against
 # .git), which is what picks the branch glyph and rewrites the displayed path.
-# Absolute on purpose: from a subdirectory git prints --git-common-dir relative
-# (`../.git`) while --git-dir stays absolute, and the two would differ in every
-# plain checkout.
 { read -r _gitdir; read -r _gitcommondir; read -r _toplevel; read -r GIT_COMMIT; } < <(
-  git rev-parse --path-format=absolute --git-dir --git-common-dir --show-toplevel --short HEAD 2>/dev/null
+  git rev-parse --git-dir --git-common-dir --show-toplevel --short HEAD 2>/dev/null
 )
 [ -n "$_gitdir" ] && IS_GIT=1
 IS_WORKTREE=0
-[ -n "$_gitdir" ] && [ "$_gitdir" != "$_gitcommondir" ] && IS_WORKTREE=1
+# Git resolves each dir independently, so from a subdirectory of an ordinary
+# checkout it prints --git-dir absolute and --git-common-dir relative
+# (`../.git`) — two spellings of one directory. Comparing the raw strings made
+# every such session a worktree whose project root collapsed to `..`; only a
+# real mismatch pays for resolving them. --path-format=absolute would do this
+# inside git, but it needs git 2.31+, and older git echoes an unknown flag on
+# stdout instead of failing, which shifts every read above by one line.
+if [ -n "$_gitdir" ] && [ "$_gitdir" != "$_gitcommondir" ]; then
+  # -P on both halves, because git prints its absolute form from getcwd(), which
+  # is physical. A logical `pwd` resolves against $PWD, so a checkout reached
+  # through a symlink would compare a physical path against a logical one and
+  # land right back on the false worktree this whole block exists to prevent.
+  [ "$(cd -P "$_gitdir" 2>/dev/null && pwd -P)" = "$(cd -P "$_gitcommondir" 2>/dev/null && pwd -P)" ] || IS_WORKTREE=1
+fi
 GIT_GLYPH=$BRANCH_GLYPH
 [ "$IS_WORKTREE" -eq 1 ] && GIT_GLYPH=$WORKTREE_GLYPH
 [ "$IS_GIT" -eq 1 ] && BRANCH="$(git branch --show-current 2>/dev/null)"
