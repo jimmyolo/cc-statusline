@@ -753,7 +753,7 @@ if [ -n "$RATE_5H" ]; then
   L2="${L2}${SEP}${DIM}5h${RESET} ${R5_C}${R5_INT}%${RESET}"
   if [ -n "$RESET_5H" ]; then
     R5_CD=$(fmt_countdown "$RESET_5H")
-    L2="${L2} ${DIM}(${R5_CD})${RESET}"
+    L2="${L2} ${DIM}(↺ ${R5_CD})${RESET}"
   fi
 fi
 
@@ -763,7 +763,7 @@ if [ -n "$RATE_7D" ]; then
   L2="${L2}${SEP}${DIM}7d${RESET} ${R7_C}${R7_INT}%${RESET}"
   if [ -n "$RESET_7D" ]; then
     R7_CD=$(fmt_countdown "$RESET_7D")
-    L2="${L2} ${DIM}(${R7_CD})${RESET}"
+    L2="${L2} ${DIM}(↺ ${R7_CD})${RESET}"
   fi
 fi
 

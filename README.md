@@ -11,7 +11,7 @@ Two equivalent implementations, pick whichever fits your platform:
 
 ```
 Opus 4.7 (high) | jimmy:ajent git:( main:f97c9bf) (5M 1A +16 -8) | NOR | 👤 v***@gmail.com
-●●●◐●●●●●● 35% 987K | $1.23 (today $5.67) | 5h 23% (2h 14m) | 7d 57% (5d 8h)
+●●●◐●●●●●● 35% 987K | $1.23 (today $5.67) | 5h 23% (↺ 2h 14m) | 7d 57% (↺ 5d 8h)
 cache 97% | in: 123.4K out: 7.8K | api wait 30m 00s (50%) | +42 -7 lines | #4f1c8e02-… | tools Read,Bash
 todos 3/7 fix smoke test | 14:23 ❯ update README sample output
 ```

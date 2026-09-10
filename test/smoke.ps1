@@ -71,9 +71,9 @@ function Get-Countdown7d {  # $Offset = seconds from now; returns the 7d group f
     return ''
 }
 # The reported symptom. Operand order is load-bearing — swapped, this reads "13d 2h".
-Test-Check "(countdown) 61h44m reads 2d 13h" ((Get-Countdown7d 222240) -eq '7d 57% (2d 13h)')
+Test-Check "(countdown) 61h44m reads 2d 13h" ((Get-Countdown7d 222240) -eq '7d 57% (↺ 2d 13h)')
 # Just past the inclusive boundary: pins the "1d 0h" spelling against "24h 0m".
-Test-Check "(countdown) 24h+1m reads 1d 0h" ((Get-Countdown7d 86460) -eq '7d 57% (1d 0h)')
+Test-Check "(countdown) 24h+1m reads 1d 0h" ((Get-Countdown7d 86460) -eq '7d 57% (↺ 1d 0h)')
 Test-Check "contains in/out tokens" (($plain -match 'in: 123\.4K') -and ($plain -match 'out: 7\.8K'))
 Test-Check "contains api wait line" ($plain -match 'api wait')
 Test-Check "contains cache hit %" ($plain -match 'cache 97%')

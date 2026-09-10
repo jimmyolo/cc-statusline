@@ -82,9 +82,9 @@ countdown_7d() {  # $1 = seconds from now; echoes the plain 7d group from L2
   rm -f "$tmp"
 }
 # The reported symptom. Operand order is load-bearing — swapped, this reads "13d 2h".
-check "(countdown) 61h44m reads 2d 13h" '[ "$(countdown_7d 222240)" = "7d 57% (2d 13h)" ]'
+check "(countdown) 61h44m reads 2d 13h" '[ "$(countdown_7d 222240)" = "7d 57% (↺ 2d 13h)" ]'
 # Just past the inclusive boundary: pins the "1d 0h" spelling against "24h 0m".
-check "(countdown) 24h+1m reads 1d 0h"  '[ "$(countdown_7d 86460)" = "7d 57% (1d 0h)" ]'
+check "(countdown) 24h+1m reads 1d 0h"  '[ "$(countdown_7d 86460)" = "7d 57% (↺ 1d 0h)" ]'
 check "contains in/out tokens"         'grep -q "in: 123.4K" <<< "$plain" && grep -q "out: 7.8K" <<< "$plain"'
 check "contains api wait line"         'grep -q "api wait" <<< "$plain"'
 check "contains cache hit %"           'grep -q "cache 97%" <<< "$plain"'
