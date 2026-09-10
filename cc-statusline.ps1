@@ -731,7 +731,7 @@ if ($Rate5h) {
     $L2 += "${Sep}${Dim}5h${Reset} ${R5Color}${R5Int}%${Reset}"
     if ($Reset5h) {
         $R5Cd = Format-Countdown $Reset5h
-        $L2 += " ${Dim}(${R5Cd})${Reset}"
+        $L2 += " ${Dim}(↺ ${R5Cd})${Reset}"
     }
 }
 
@@ -741,7 +741,7 @@ if ($Rate7d) {
     $L2 += "${Sep}${Dim}7d${Reset} ${R7Color}${R7Int}%${Reset}"
     if ($Reset7d) {
         $R7Cd = Format-Countdown $Reset7d
-        $L2 += " ${Dim}(${R7Cd})${Reset}"
+        $L2 += " ${Dim}(↺ ${R7Cd})${Reset}"
     }
 }
 
