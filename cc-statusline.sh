@@ -33,7 +33,7 @@
 #
 # Display layout:
 #   L1: model + user:cwd + branch:commit + git-stats + vim + account
-#   L2: ctx-bar + ctx-size + cost + today-cost + 5h + 7d
+#   L2: ctx-bar + ctx-size + cost + today-cost + 5h + 7d + per-model 7d (not from stdin)
 #   L3: cache-hit + tokens + api-wait + session-id   (❌ cur-token-detail disabled — see l. ~413)
 #   L4: running-tools + todos + last-prompt   (only printed if non-empty)
 #
@@ -739,7 +739,7 @@ GIT_STATS=""
 
 # ══════════════════════════════════════════════════════════════
 # LINE 2: Context bar + Window label + Cost + Rate limits (5h & 7d with countdown)
-# INPUTS: BAR PCT CTX_LABEL COST TODAY_COST RATE_5H RESET_5H RATE_7D RESET_7D
+# INPUTS: BAR PCT CTX_LABEL COST TODAY_COST RATE_5H RESET_5H RATE_7D RESET_7D USAGE_CACHE
 # ══════════════════════════════════════════════════════════════
 COST_FMT=$(printf '$%.2f' "$COST")
 TODAY_FMT=$(printf '$%.2f' "$TODAY_COST")
@@ -750,17 +750,82 @@ L2="${L2}${SEP}${YELLOW}${COST_FMT}${RESET} ${DIM}(today ${TODAY_FMT})${RESET}"
 if [ -n "$RATE_5H" ]; then
   R5_INT=$(printf "%.0f" "$RATE_5H")
   R5_C=$(color_pct "$R5_INT")
-  L2="${L2}${SEP}${DIM}5h${RESET} ${R5_C}${R5_INT}%${RESET}"
+  L2="${L2}${SEP}${DIM}5h:${RESET}${R5_C}${R5_INT}%${RESET}"
   if [ -n "$RESET_5H" ]; then
     R5_CD=$(fmt_countdown "$RESET_5H")
     L2="${L2} ${DIM}(↺ ${R5_CD})${RESET}"
   fi
 fi
 
+# ── Per-model weekly usage (opt-out: CC_STATUSLINE_MODEL_USAGE=0) ──
+# The payload carries the 5h and 7d windows only; a model with a weekly limit
+# of its own (Fable) is absent from it. The experimental get_usage control
+# request does return it, so a detached headless `claude` refreshes a cache at
+# most every 5 minutes and the render below only ever reads that cache. The
+# request is a fixed literal and nothing from stdin reaches the command line.
+# The models join the 7d group and share its countdown: theirs is a weekly
+# window on the same reset.
+R7_MODELS=""
+USAGE_CACHE=$HOME/.claude/cc-statusline-usage.tsv
+# No 7d window means no subscription limits at all, so nothing to ask for.
+if [ "${CC_STATUSLINE_MODEL_USAGE:-1}" != 0 ] && [ -n "$RATE_7D" ]; then
+  USAGE_LAST=0
+  [ -r "$USAGE_CACHE.stamp" ] && read -r USAGE_LAST < "$USAGE_CACHE.stamp"
+  case $USAGE_LAST in ''|*[!0-9]*) USAGE_LAST=0 ;; esac
+  # The stamp records the attempt, not the success, so a refresh that keeps
+  # failing is retried once per window and not on every render. setsid takes
+  # the job out of the process group Claude Code cancels with the render.
+  if [ $(( EPOCHSECONDS - USAGE_LAST )) -ge 300 ] \
+     && command -v setsid >/dev/null && command -v timeout >/dev/null \
+     && printf '%s\n' "$EPOCHSECONDS" 2>/dev/null > "$USAGE_CACHE.stamp"; then
+    # cd / and the emptied setting sources keep project hooks, MCP servers and
+    # skills out of the run. A record is written only when jq produced one.
+    USAGE_CACHE=$USAGE_CACHE \
+    USAGE_REQ='{"type":"control_request","request_id":"u1","request":{"subtype":"get_usage","skip_behaviors":true}}' \
+    USAGE_FILTER='
+      select(.type == "control_response")
+      | .response.response.rate_limits.model_scoped[]?
+      | try [(.utilization | round),
+             (.resets_at | sub("\\.[0-9]+"; "") | sub("\\+00:00$"; "Z") | fromdateiso8601),
+             .display_name] catch empty
+      | select(.[2] | type == "string") | @tsv' \
+    setsid bash -c '
+      umask 077; cd / || exit
+      rec=$(printf "%s\n" "$USAGE_REQ" | timeout 30 claude -p \
+        --input-format stream-json --output-format stream-json --verbose \
+        --model haiku --setting-sources "" --strict-mcp-config \
+        --disable-slash-commands --no-session-persistence 2>/dev/null \
+        | jq -r "$USAGE_FILTER" 2>/dev/null)
+      [ -n "$rec" ] && printf "%s\n%s\n" "$EPOCHSECONDS" "$rec" > "$USAGE_CACHE.$$" \
+        && mv -f "$USAGE_CACHE.$$" "$USAGE_CACHE"
+    ' </dev/null >/dev/null 2>&1 &
+  fi
+
+  # Cache: line 1 the fetch epoch, then one "pct<TAB>resets_at<TAB>label" per
+  # model. A fetch older than 30 minutes means the refresh is broken, and an
+  # old number shown as current is worse than none.
+  if [ -r "$USAGE_CACHE" ]; then
+    {
+      read -r U_AT
+      case $U_AT in ''|*[!0-9]*) U_AT=0 ;; esac
+      if [ $(( EPOCHSECONDS - U_AT )) -lt 1800 ]; then
+        while IFS=$'\t' read -r U_PCT U_RESET U_NAME; do
+          case $U_PCT$U_RESET in ''|*[!0-9]*) continue ;; esac
+          [ "$U_RESET" -gt "$EPOCHSECONDS" ] || continue
+          # The label is server-supplied and printed to a terminal.
+          U_NAME=${U_NAME,,}; U_NAME=${U_NAME//[^a-z0-9 ._-]/}; U_NAME=${U_NAME:0:16}
+          [ -n "$U_NAME" ] || continue
+          R7_MODELS="${R7_MODELS} ${DIM}${U_NAME}:${RESET}$(color_pct "$U_PCT")${U_PCT}%${RESET}"
+        done
+      fi
+    } < "$USAGE_CACHE"
+  fi
+fi
+
 if [ -n "$RATE_7D" ]; then
   R7_INT=$(printf "%.0f" "$RATE_7D")
   R7_C=$(color_pct "$R7_INT")
-  L2="${L2}${SEP}${DIM}7d${RESET} ${R7_C}${R7_INT}%${RESET}"
+  L2="${L2}${SEP}${DIM}7d:${RESET}${R7_C}${R7_INT}%${RESET}${R7_MODELS}"
   if [ -n "$RESET_7D" ]; then
     R7_CD=$(fmt_countdown "$RESET_7D")
     L2="${L2} ${DIM}(↺ ${R7_CD})${RESET}"

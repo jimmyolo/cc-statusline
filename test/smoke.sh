@@ -17,6 +17,8 @@ SAMPLE="$SCRIPT_DIR/sample.json"
 unset CLAUDE_AUTOCOMPACT_PCT_OVERRIDE
 unset CLAUDE_CODE_AUTO_COMPACT_WINDOW
 unset CC_STATUSLINE_FORGE CC_STATUSLINE_WEB_PORT
+# Left on, a render spawns the real `claude`; the usage pass sets it per case.
+export CC_STATUSLINE_MODEL_USAGE=0
 
 # The scratch HOME is created here rather than beside its first heavy user, the
 # effort pass, and exported for every case: the script reads the cost tracker,
@@ -64,8 +66,8 @@ check "contains ctx window label"      'grep -qE "[0-9]+% [0-9.]+[KM]" <<< "$(pr
 check "version hidden (AJ-25)"         '! grep -q "v1.2.3" <<< "$plain"'
 check "contains session cost"          'grep -q "\$1.23" <<< "$plain"'
 check "contains today cost label"      'grep -qF "(today \$" <<< "$plain"'
-check "contains 5h rate limit"         'grep -q "5h 23%" <<< "$plain"'
-check "contains 7d rate limit"         'grep -q "7d 57%" <<< "$plain"'
+check "contains 5h rate limit"         'grep -q "5h:23%" <<< "$plain"'
+check "contains 7d rate limit"         'grep -q "7d:57%" <<< "$plain"'
 
 # ── Countdown day unit ────────────────────────────────────────
 # The 7d window resets up to 168h out, so its countdown has to read "2d 13h"
@@ -78,13 +80,13 @@ countdown_7d() {  # $1 = seconds from now; echoes the plain 7d group from L2
      '.rate_limits.seven_day.resets_at = $t' "$SAMPLE" > "$tmp"
   bash "$SCRIPT" < "$tmp" 2>/dev/null \
     | sed -E 's/\x1b\[[0-9;]*[a-zA-Z]//g; s/\x1b\]8;;[^\x07]*\x07//g' \
-    | grep -oE '7d 57% \([^)]*\)'
+    | grep -oE '7d:57% \([^)]*\)'
   rm -f "$tmp"
 }
 # The reported symptom. Operand order is load-bearing — swapped, this reads "13d 2h".
-check "(countdown) 61h44m reads 2d 13h" '[ "$(countdown_7d 222240)" = "7d 57% (↺ 2d 13h)" ]'
+check "(countdown) 61h44m reads 2d 13h" '[ "$(countdown_7d 222240)" = "7d:57% (↺ 2d 13h)" ]'
 # Just past the inclusive boundary: pins the "1d 0h" spelling against "24h 0m".
-check "(countdown) 24h+1m reads 1d 0h"  '[ "$(countdown_7d 86460)" = "7d 57% (↺ 1d 0h)" ]'
+check "(countdown) 24h+1m reads 1d 0h"  '[ "$(countdown_7d 86460)" = "7d:57% (↺ 1d 0h)" ]'
 check "contains in/out tokens"         'grep -q "in: 123.4K" <<< "$plain" && grep -q "out: 7.8K" <<< "$plain"'
 check "contains api wait line"         'grep -q "api wait" <<< "$plain"'
 check "contains cache hit %"           'grep -q "cache 97%" <<< "$plain"'
@@ -503,6 +505,73 @@ check "(cost) other sessions summed" \
 # Yesterday's file is discarded rather than carried forward.
 check "(cost) stale date resets" \
   '[ "$(today_cost "{\"date\":\"1999-01-01\",\"sessions\":{\"other\":2.00}}")" = "(today \$1.25)" ]'
+
+# ── Eighth pass: per-model weekly usage ───────────────────────────────────
+# The payload carries no per-model window, so the number comes from a detached
+# `claude -p` get_usage request and is rendered from a cache. What matters:
+# nothing is spawned when turned off, at most one spawn per throttle window,
+# and the server-supplied label never reaches the terminal unfiltered.
+echo
+echo "Running model-usage cases…"
+USAGE_CACHE="$HOME_TMP/.claude/cc-statusline-usage.tsv"
+FAKE_BIN=$(mktemp -d)
+FAKE_LOG="$FAKE_BIN/calls"
+cat > "$FAKE_BIN/claude" <<FAKE
+#!/bin/bash
+echo "\$PWD \$*" >> "$FAKE_LOG"
+cat "$SCRIPT_DIR/usage-sample.json"
+FAKE
+chmod +x "$FAKE_BIN/claude"
+usage_reset() { rm -f "$USAGE_CACHE" "$USAGE_CACHE.stamp" "$FAKE_LOG"; }
+usage_l2() {  # $1 = CC_STATUSLINE_MODEL_USAGE value; echoes plain L2
+  PATH="$FAKE_BIN:$PATH" CC_STATUSLINE_MODEL_USAGE=$1 bash "$SCRIPT" < "$SAMPLE" 2>/dev/null \
+    | sed -n 2p | sed -E 's/\x1b\[[0-9;]*[a-zA-Z]//g'
+}
+usage_seed() {  # $1 = fetched-at offset, $2 = reset offset, $3 = label
+  local now; now=$(date +%s)
+  printf '%s\n' "$now" > "$USAGE_CACHE.stamp"
+  printf '%s\n%s\t%s\t%s\n' "$(( now + $1 ))" 10 "$(( now + $2 ))" "$3" > "$USAGE_CACHE"
+}
+usage_wait() {  # the refresh is detached; give it up to 5s to land
+  local i; for i in $(seq 50); do [ -s "$USAGE_CACHE" ] && return 0; sleep 0.1; done; return 1
+}
+
+usage_reset; usage_seed 0 222240 Fable
+check "(usage) =0: nothing rendered"             '! grep -q "fable" <<< "$(usage_l2 0)"'
+# Unset is on, and so is the empty string a settings.json env entry can carry.
+check "(usage) on by default"                    'grep -q "fable:10%" <<< "$(usage_l2 "")"'
+usage_reset
+usage_l2 0 >/dev/null
+# No 7d window is an account with no subscription limits: nothing to ask for.
+jq "del(.rate_limits)" "$SAMPLE" | PATH="$FAKE_BIN:$PATH" CC_STATUSLINE_MODEL_USAGE=1 bash "$SCRIPT" >/dev/null 2>&1
+sleep 0.5
+check "(usage) =0 or no 7d window: nothing spawned" '[ ! -e "$FAKE_LOG" ] && [ ! -e "$USAGE_CACHE.stamp" ]'
+usage_seed 0 222240 Fable
+check "(usage) joins the 7d group, one countdown" 'grep -q "| 7d:57% fable:10% (↺ [^)]*)\$" <<< "$(usage_l2 1)"'
+check "(usage) fresh stamp: nothing spawned"     '[ ! -e "$FAKE_LOG" ]'
+# A window past its reset is dropped, the rule Claude Code applies to its own.
+usage_seed 0 -5 Fable
+check "(usage) expired window hidden"            '! grep -q "fable" <<< "$(usage_l2 1)"'
+# A refresh that keeps failing must not leave an old number looking current.
+usage_seed -7200 222240 Fable
+check "(usage) stale cache hidden"               '! grep -q "fable" <<< "$(usage_l2 1)"'
+# The label is server-supplied and lands in a terminal: escapes are stripped.
+usage_seed 0 222240 $'Fa\x1b]0;x\x07ble'
+check "(usage) label is sanitised" \
+  '[ "$(PATH="$FAKE_BIN:$PATH" CC_STATUSLINE_MODEL_USAGE=1 bash "$SCRIPT" < "$SAMPLE" 2>/dev/null | sed -n 2p | grep -c "0;x")" = 0 ] && grep -q "fa0xble:10%" <<< "$(usage_l2 1)"'
+
+usage_reset
+usage_l2 1 >/dev/null; usage_l2 1 >/dev/null
+check "(usage) stale stamp: refresh lands"       'usage_wait'
+check "(usage) two renders, one spawn"           '[ "$(wc -l < "$FAKE_LOG")" = 1 ]'
+# Malformed entries (non-numeric %, unparseable date) are dropped, not written.
+check "(usage) cache holds only the valid entry" \
+  '[ "$(sed -n "2,\$p" "$USAGE_CACHE")" = "$(printf "10\t4070908800\tFable")" ]'
+check "(usage) cache is private"                 '[ "$(stat -c %a "$USAGE_CACHE")" = 600 ]'
+# Run from / with settings sources emptied, so no project config rides along.
+check "(usage) spawn is isolated"                'grep -q "^/ .*--setting-sources  .*--strict-mcp-config" "$FAKE_LOG"'
+check "(usage) refreshed value renders"          'grep -q "fable:10% (↺ " <<< "$(usage_l2 1)"'
+rm -rf "$FAKE_BIN"
 
 echo
 echo "Result: $pass passed, $fail failed."

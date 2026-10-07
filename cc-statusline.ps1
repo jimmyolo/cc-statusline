@@ -728,7 +728,7 @@ $L2 += "${Sep}${Yellow}${CostFmt}${Reset} ${Dim}(today ${TodayFmt})${Reset}"
 if ($Rate5h) {
     $R5Int = [math]::Round([double]$Rate5h, [MidpointRounding]::AwayFromZero)
     $R5Color = Get-PctColor $R5Int
-    $L2 += "${Sep}${Dim}5h${Reset} ${R5Color}${R5Int}%${Reset}"
+    $L2 += "${Sep}${Dim}5h:${Reset}${R5Color}${R5Int}%${Reset}"
     if ($Reset5h) {
         $R5Cd = Format-Countdown $Reset5h
         $L2 += " ${Dim}(↺ ${R5Cd})${Reset}"
@@ -738,7 +738,7 @@ if ($Rate5h) {
 if ($Rate7d) {
     $R7Int = [math]::Round([double]$Rate7d, [MidpointRounding]::AwayFromZero)
     $R7Color = Get-PctColor $R7Int
-    $L2 += "${Sep}${Dim}7d${Reset} ${R7Color}${R7Int}%${Reset}"
+    $L2 += "${Sep}${Dim}7d:${Reset}${R7Color}${R7Int}%${Reset}"
     if ($Reset7d) {
         $R7Cd = Format-Countdown $Reset7d
         $L2 += " ${Dim}(↺ ${R7Cd})${Reset}"

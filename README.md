@@ -11,7 +11,7 @@ Two equivalent implementations, pick whichever fits your platform:
 
 ```
 Opus 4.7 (high) | jimmy:ajent git:( main:f97c9bf) (5M 1A +16 -8) | NOR | 👤 v***@gmail.com
-●●●◐●●●●●● 35% 987K | $1.23 (today $5.67) | 5h 23% (↺ 2h 14m) | 7d 57% (↺ 5d 8h)
+●●●◐●●●●●● 35% 987K | $1.23 (today $5.67) | 5h:23% (↺ 2h 14m) | 7d:57% fable:10% (↺ 5d 8h)
 cache 97% | in: 123.4K out: 7.8K | api wait 30m 00s (50%) | +42 -7 lines | #4f1c8e02-… | tools Read,Bash
 todos 3/7 fix smoke test | 14:23 ❯ update README sample output
 ```
@@ -107,7 +107,7 @@ The full mapping (with paired-disable annotations) lives at the top of [`cc-stat
 | Line | Contents |
 |---|---|
 | L1 | model · `user:project-root` · `branch:commit` · git-stats · vim · account (redacted email) |
-| L2 | context-bar · window label · cost (session + today) · 5h limit · 7d limit |
+| L2 | context-bar · window label · cost (session + today) · 5h limit · 7d limit · per-model weekly limit |
 | L3 | cache-hit · tokens in/out · api wait · session lines · session id · running tools |
 | L4 | running tools · todos (with current task) · last prompt (with `❯` marker) — entire line conditionally rendered |
 
@@ -151,6 +151,26 @@ Inside a worktree the branch link is the only way left to reach the checkout act
 Outside one, the forge link is omitted where it would resolve to nothing: on a detached HEAD, whose displayed name is a remote ref or the literal `detached`, and on a branch with no `refs/remotes/origin/<branch>` — a throwaway worktree's local branch being the usual one, though that case now takes the `file://` link above instead. Pushing the branch creates that ref, and the link appears; a `clone --single-branch`, whose refspec never fetches other branches, is the case where a pushed branch still has no link.
 
 Both targets land in a URL *path*, so only the bytes that would break one are escaped: `%`, `#`, `?` and a space. `/` is deliberately left alone — `feat/x` is both a real ref and a real tree path, and `%2F` is resolved by neither forge.
+
+### Per-model weekly limit
+
+`cc-statusline.sh` only. On by default for an account that has a 7d window; to turn it off:
+
+```bash
+export CC_STATUSLINE_MODEL_USAGE=0   # L2 loses the model: 7d:57% fable:10% (↺ 2d 5h)
+```
+
+A model with a weekly limit of its own (Fable) is not in the payload: `rate_limits` carries `five_hour` and `seven_day` and nothing per model ([#92080](https://github.com/anthropics/claude-code/issues/92080), [#91920](https://github.com/anthropics/claude-code/issues/91920)). Until it is, the number comes from the experimental `get_usage` control request, sent by a detached headless `claude -p` at most once every 5 minutes. The render never waits for it; it reads `~/.claude/cc-statusline-usage.tsv`, which that job writes.
+
+What the refresh does and does not do:
+
+- It runs your own `claude` under your existing login. The script reads no token and calls no endpoint itself.
+- The request is a fixed literal. Nothing from the status line payload reaches the command line.
+- It runs from `/` with `--setting-sources "" --strict-mcp-config --disable-slash-commands --no-session-persistence`, so no project hooks, MCP servers or skills load, and no session is recorded. It makes no model call.
+- It is killed after 30 seconds, and a failed attempt is retried on the next 5-minute window, not on the next render.
+- The cache is mode `600`. The label it holds is server-supplied, so it is reduced to `[a-z0-9 ._-]` before it is printed.
+
+The number can be up to 5 minutes old. A window past its reset is dropped, and so is a cache older than 30 minutes, which means the refresh has stopped working: the request is undocumented and may change. Needs `setsid` and `timeout` (util-linux, coreutils); without them nothing is spawned and nothing is shown.
 
 ### Context bar denominator
 
