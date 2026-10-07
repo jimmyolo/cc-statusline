@@ -154,7 +154,7 @@ Both targets land in a URL *path*, so only the bytes that would break one are es
 
 ### Per-model weekly limit
 
-`cc-statusline.sh` only. On by default for an account that has a 7d window; to turn it off:
+On by default for an account that has a 7d window; to turn it off:
 
 ```bash
 export CC_STATUSLINE_MODEL_USAGE=0   # L2 loses the model: 7d:57% fable:10% (↺ 2d 5h)
@@ -170,7 +170,9 @@ What the refresh does and does not do:
 - It is killed after 30 seconds, and a failed attempt is retried on the next 5-minute window, not on the next render.
 - The cache is mode `600`. The label it holds is server-supplied, so it is reduced to `[a-z0-9 ._-]` before it is printed.
 
-The number can be up to 5 minutes old. A window past its reset is dropped, and so is a cache older than 30 minutes, which means the refresh has stopped working: the request is undocumented and may change. Needs `setsid` and `timeout` (util-linux, coreutils); without them nothing is spawned and nothing is shown.
+The number can be up to 5 minutes old. A window past its reset is dropped, and so is a cache older than 30 minutes, which means the refresh has stopped working: the request is undocumented and may change. `cc-statusline.sh` needs `setsid` and `timeout` (util-linux, coreutils); without them nothing is spawned and nothing is shown.
+
+`cc-statusline.ps1` does the same with the same cache file: the refresh is the script re-invoking itself with `-RefreshUsage` in a detached `pwsh`, which takes its whole process tree down after 30 seconds. Its smoke cases run on Linux `pwsh`; the Windows launch (`Start-Process -WindowStyle Hidden`) has not been run.
 
 ### Context bar denominator
 

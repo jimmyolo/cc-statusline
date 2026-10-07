@@ -28,11 +28,61 @@
 #
 # Display layout mirrors cc-statusline.sh:
 #   L1: model . user:cwd . branch:commit . git-stats . vim . account
-#   L2: ctx-bar . ctx-size . cost (session + today) . 5h limit . 7d limit
+#   L2: ctx-bar . ctx-size . cost (session + today) . 5h limit . 7d limit . per-model 7d (not from stdin)
 #   L3: cache-hit . tokens in/out . api wait . session lines . session-id . tools
 #   Agent lines: up to 3 most recent subagent dispatches, one per line
 #   L4: todos . last prompt (conditionally printed)
 # =============================================================================
+
+# -RefreshUsage is how a render re-invokes this file, detached, to refresh the
+# per-model usage cache. It reads no stdin and prints nothing.
+param([switch]$RefreshUsage)
+
+$UsageCache = "$HOME/.claude/cc-statusline-usage.tsv"
+if ($RefreshUsage) {
+    # The payload carries the 5h and 7d windows only; a model with a weekly
+    # limit of its own (Fable) is absent from it. The experimental get_usage
+    # control request does return it. The request is a fixed literal, and the
+    # filesystem root plus the emptied setting sources keep project hooks, MCP
+    # servers and skills out of the run. --setting-sources= and not a separate
+    # "" argument: PowerShell drops an empty argument on its way to a .cmd shim.
+    try {
+        # A hung claude must not outlive its window: take the whole tree down.
+        $null = Start-ThreadJob { Start-Sleep -Seconds 30; (Get-Process -Id $using:PID).Kill($true) }
+        Set-Location ([IO.Path]::GetPathRoot($HOME))
+        $UsageOut = '{"type":"control_request","request_id":"u1","request":{"subtype":"get_usage","skip_behaviors":true}}' |
+            claude -p --input-format stream-json --output-format stream-json --verbose `
+                --model haiku --setting-sources= --strict-mcp-config `
+                --disable-slash-commands --no-session-persistence 2>$null
+        $UsageRecs = foreach ($line in $UsageOut) {
+            try { $o = $line | ConvertFrom-Json } catch { continue }
+            if ($o.type -ne 'control_response') { continue }
+            foreach ($m in $o.response.response.rate_limits.model_scoped) {
+                if ($m.utilization -isnot [ValueType] -or $m.display_name -isnot [string]) { continue }
+                # ConvertFrom-Json hands an ISO timestamp back as a DateTime
+                # already; anything it left a string is parsed here or dropped.
+                $at = $m.resets_at
+                if ($at -is [string]) {
+                    $dto = [DateTimeOffset]::MinValue
+                    if (-not [DateTimeOffset]::TryParse($at, [cultureinfo]::InvariantCulture, 'AssumeUniversal', [ref]$dto)) { continue }
+                    $at = $dto
+                } elseif ($at -isnot [datetime]) { continue }
+                "{0}`t{1}`t{2}" -f [math]::Round([double]$m.utilization, [MidpointRounding]::AwayFromZero),
+                    ([DateTimeOffset]$at).ToUnixTimeSeconds(), ($m.display_name -replace '[\t\r\n]', ' ')
+            }
+        }
+        # Same shape cc-statusline.sh writes: line 1 the fetch epoch, then one
+        # "pct<TAB>resets_at<TAB>label" per model. Written only when there is a
+        # record, to a sibling first so a render never reads half a file.
+        if ($UsageRecs) {
+            $tmp = "$UsageCache.$PID"
+            [IO.File]::WriteAllText($tmp, (@([DateTimeOffset]::UtcNow.ToUnixTimeSeconds()) + @($UsageRecs) -join "`n") + "`n")
+            if (-not $IsWindows) { chmod 600 $tmp }
+            Move-Item -Force $tmp $UsageCache
+        }
+    } catch { }
+    exit 0
+}
 
 <#
   Both console streams inherit the Windows console codepage (cp950 on zh-TW),
@@ -735,10 +785,61 @@ if ($Rate5h) {
     }
 }
 
+# ── Per-model weekly usage (opt-out: CC_STATUSLINE_MODEL_USAGE=0) ──
+# Mirror of cc-statusline.sh: a detached -RefreshUsage run (top of this file)
+# refreshes the cache at most every 5 minutes and the render only reads it. The
+# models join the 7d group and share its countdown: theirs is a weekly window on
+# the same reset. No 7d window means no subscription limits, so nothing to ask.
+$R7Models = ''
+if ($env:CC_STATUSLINE_MODEL_USAGE -ne '0' -and $Rate7d) {
+    $NowEpoch = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+    $UsageLast = [int64]0
+    try { [void][int64]::TryParse((Get-Content "$UsageCache.stamp" -TotalCount 1 -ErrorAction Stop), [ref]$UsageLast) } catch { }
+    if ($NowEpoch - $UsageLast -ge 300) {
+        # The stamp records the attempt, not the success, so a refresh that
+        # keeps failing is retried once per window and not on every render.
+        try {
+            Set-Content -Path "$UsageCache.stamp" -Value $NowEpoch -ErrorAction Stop
+            # The child must not hold the pipe Claude Code reads this render
+            # from. Start-Process refuses one file for two streams, so off
+            # Windows sh does the redirecting and execs into pwsh.
+            $Self = (Get-Process -Id $PID).Path
+            if ($IsWindows) {
+                Start-Process -WindowStyle Hidden -FilePath $Self `
+                    -ArgumentList '-NoProfile', '-NonInteractive', '-File', "`"$PSCommandPath`"", '-RefreshUsage'
+            } else {
+                $Psi = [Diagnostics.ProcessStartInfo]::new('/bin/sh')
+                foreach ($a in '-c', 'exec "$0" -NoProfile -NonInteractive -File "$1" -RefreshUsage </dev/null >/dev/null 2>&1', $Self, $PSCommandPath) {
+                    $Psi.ArgumentList.Add($a)
+                }
+                [void][Diagnostics.Process]::Start($Psi)
+            }
+        } catch { }
+    }
+    # A fetch older than 30 minutes means the refresh is broken, and an old
+    # number shown as current is worse than none.
+    try {
+        $UsageLines = @(Get-Content $UsageCache -ErrorAction Stop)
+        $UsageAt = [int64]0
+        if ([int64]::TryParse($UsageLines[0], [ref]$UsageAt) -and ($NowEpoch - $UsageAt -lt 1800)) {
+            foreach ($line in ($UsageLines | Select-Object -Skip 1)) {
+                $f = $line -split "`t"
+                if ($f.Count -lt 3 -or $f[0] -notmatch '^\d+$' -or $f[1] -notmatch '^\d+$') { continue }
+                if ([int64]$f[1] -le $NowEpoch) { continue }
+                # The label is server-supplied and printed to a terminal.
+                $name = $f[2].ToLowerInvariant() -creplace '[^a-z0-9 ._-]', ''
+                if ($name.Length -gt 16) { $name = $name.Substring(0, 16) }
+                if (-not $name) { continue }
+                $R7Models += " ${Dim}${name}:${Reset}$(Get-PctColor $f[0])$($f[0])%${Reset}"
+            }
+        }
+    } catch { }
+}
+
 if ($Rate7d) {
     $R7Int = [math]::Round([double]$Rate7d, [MidpointRounding]::AwayFromZero)
     $R7Color = Get-PctColor $R7Int
-    $L2 += "${Sep}${Dim}7d:${Reset}${R7Color}${R7Int}%${Reset}"
+    $L2 += "${Sep}${Dim}7d:${Reset}${R7Color}${R7Int}%${Reset}${R7Models}"
     if ($Reset7d) {
         $R7Cd = Format-Countdown $Reset7d
         $L2 += " ${Dim}(↺ ${R7Cd})${Reset}"

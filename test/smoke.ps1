@@ -23,6 +23,8 @@ Remove-Item Env:\CLAUDE_AUTOCOMPACT_PCT_OVERRIDE -ErrorAction SilentlyContinue
 Remove-Item Env:\CLAUDE_CODE_AUTO_COMPACT_WINDOW -ErrorAction SilentlyContinue
 Remove-Item Env:\CC_STATUSLINE_FORGE -ErrorAction SilentlyContinue
 Remove-Item Env:\CC_STATUSLINE_WEB_PORT -ErrorAction SilentlyContinue
+# Left on, a render spawns the real `claude`; the usage pass sets it per case.
+$env:CC_STATUSLINE_MODEL_USAGE = '0'
 
 $Pass = 0
 $Fail = 0
@@ -311,6 +313,92 @@ try {
 } finally {
     Remove-Item -Recurse -Force $RepoTmp -ErrorAction SilentlyContinue
     if ($WtPath) { Remove-Item -Recurse -Force $WtPath -ErrorAction SilentlyContinue }
+}
+
+# ── Per-model weekly usage ────────────────────────────────────
+# Mirrors smoke.sh. The payload carries no per-model window, so the number comes
+# from a detached refresh and is rendered from a cache. What matters: nothing is
+# spawned when turned off, at most one spawn per throttle window, and the
+# server-supplied label never reaches the terminal unfiltered.
+Write-Output ""
+Write-Output "Running model-usage cases..."
+$UsageHome = Join-Path ([IO.Path]::GetTempPath()) "cc-statusline-usage-$PID"
+$FakeBin = Join-Path $UsageHome 'bin'
+New-Item -ItemType Directory -Force -Path (Join-Path $UsageHome '.claude'), $FakeBin | Out-Null
+$UsageCache = Join-Path $UsageHome '.claude/cc-statusline-usage.tsv'
+$FakeLog = Join-Path $FakeBin 'calls'
+# A .ps1 on PATH resolves as `claude` on every platform.
+@"
+Add-Content -Path '$FakeLog' -Value "`$PWD `$args"
+Get-Content -Raw '$(Join-Path $ScriptDir 'usage-sample.json')'
+"@ | Set-Content (Join-Path $FakeBin 'claude.ps1')
+$SavedEnv = @{ HOME = $env:HOME; USERPROFILE = $env:USERPROFILE; PATH = $env:PATH }
+$env:HOME = $UsageHome; $env:USERPROFILE = $UsageHome
+$env:PATH = $FakeBin + [IO.Path]::PathSeparator + $env:PATH
+
+function Reset-Usage { Remove-Item -Force $UsageCache, "$UsageCache.stamp", $FakeLog -ErrorAction SilentlyContinue }
+function Get-UsageL2 {  # $Value = CC_STATUSLINE_MODEL_USAGE ('' removes it); returns raw L2
+    param([string]$Value, [string]$Json = (Get-Content -Raw $Sample))
+    $env:CC_STATUSLINE_MODEL_USAGE = $Value
+    $o = $Json | & $PwshExe -NoProfile -File $Script
+    $env:CC_STATUSLINE_MODEL_USAGE = '0'
+    return @($o)[1]
+}
+function Get-UsagePlain { param([string]$Value) (Get-UsageL2 $Value) -replace "`e\[[0-9;]*[a-zA-Z]", '' }
+function Set-UsageSeed {  # fetched-at offset, reset offset, label
+    param([int64]$At, [int64]$ResetIn, [string]$Label)
+    $now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+    [IO.File]::WriteAllText("$UsageCache.stamp", "$now`n")
+    [IO.File]::WriteAllText($UsageCache, "$($now + $At)`n10`t$($now + $ResetIn)`t$Label`n")
+}
+
+try {
+    Reset-Usage; Set-UsageSeed 0 222240 'Fable'
+    Test-Check "(usage) =0: nothing rendered" (-not ((Get-UsagePlain '0') -match 'fable'))
+    Test-Check "(usage) on by default" ((Get-UsagePlain '') -match 'fable:10%')
+    Reset-Usage
+    [void](Get-UsageL2 '0')
+    # No 7d window is an account with no subscription limits: nothing to ask for.
+    $NoLimits = Get-Content -Raw $Sample | ConvertFrom-Json
+    $NoLimits.PSObject.Properties.Remove('rate_limits')
+    [void](Get-UsageL2 '1' ($NoLimits | ConvertTo-Json -Depth 10))
+    Start-Sleep -Seconds 2
+    Test-Check "(usage) =0 or no 7d window: nothing spawned" (-not (Test-Path $FakeLog) -and -not (Test-Path "$UsageCache.stamp"))
+    Set-UsageSeed 0 222240 'Fable'
+    Test-Check "(usage) joins the 7d group, one countdown" ((Get-UsagePlain '1') -match '\| 7d:57% fable:10% \(↺ [^)]*\)$')
+    Test-Check "(usage) fresh stamp: nothing spawned" (-not (Test-Path $FakeLog))
+    # A window past its reset is dropped, the rule Claude Code applies to its own.
+    Set-UsageSeed 0 -5 'Fable'
+    Test-Check "(usage) expired window hidden" (-not ((Get-UsagePlain '1') -match 'fable'))
+    # A refresh that keeps failing must not leave an old number looking current.
+    Set-UsageSeed -7200 222240 'Fable'
+    Test-Check "(usage) stale cache hidden" (-not ((Get-UsagePlain '1') -match 'fable'))
+    # The label is server-supplied and lands in a terminal: escapes are stripped.
+    Set-UsageSeed 0 222240 "Fa`e]0;x`able"
+    $RawL2 = Get-UsageL2 '1'
+    Test-Check "(usage) label is sanitised" (-not ($RawL2 -match '0;x') -and (($RawL2 -replace "`e\[[0-9;]*[a-zA-Z]", '') -match 'fa0xble:10%'))
+
+    Reset-Usage
+    [void](Get-UsageL2 '1'); [void](Get-UsageL2 '1')
+    # The refresh is detached; give it time to start a second pwsh and land.
+    foreach ($i in 1..100) { if ((Test-Path $UsageCache) -and (Get-Item $UsageCache).Length -gt 0) { break }; Start-Sleep -Milliseconds 200 }
+    Test-Check "(usage) stale stamp: refresh lands" (Test-Path $UsageCache)
+    Test-Check "(usage) two renders, one spawn" (@(Get-Content $FakeLog -ErrorAction SilentlyContinue).Count -eq 1)
+    # Malformed entries (non-numeric %, unparseable date) are dropped, not written.
+    Test-Check "(usage) cache holds only the valid entry" `
+        ((@(Get-Content $UsageCache -ErrorAction SilentlyContinue) | Select-Object -Skip 1) -join '|' -eq "10`t4070908800`tFable")
+    if (-not $IsWindows) {
+        Test-Check "(usage) cache is private" ((& stat -c '%a' $UsageCache) -eq '600')
+    }
+    # Run from the filesystem root with settings sources emptied, so no project
+    # config rides along.
+    $Call = "$(Get-Content $FakeLog -ErrorAction SilentlyContinue | Select-Object -First 1)"
+    Test-Check "(usage) spawn is isolated" `
+        ($Call.StartsWith([IO.Path]::GetPathRoot($UsageHome) + ' ') -and $Call -match '--setting-sources= .*--strict-mcp-config')
+    Test-Check "(usage) refreshed value renders" ((Get-UsagePlain '1') -match 'fable:10% \(↺ ')
+} finally {
+    $env:HOME = $SavedEnv.HOME; $env:USERPROFILE = $SavedEnv.USERPROFILE; $env:PATH = $SavedEnv.PATH
+    Remove-Item -Recurse -Force $UsageHome -ErrorAction SilentlyContinue
 }
 
 Write-Output ""
