@@ -1,0 +1,11 @@
+{
+  "name": "cc-statusline",
+  "description": "Multi-line ANSI statusline for Claude Code: model, cost, context, rate limits, tokens, cache hit rate, live agent/tool/todo activity and the last prompt",
+  "author": {
+    "name": "jimmyolo"
+  },
+  "homepage": "https://github.com/jimmyolo/cc-statusline",
+  "repository": "https://github.com/jimmyolo/cc-statusline",
+  "license": "Unlicense",
+  "keywords": ["statusline", "context", "rate-limits", "cost", "bash", "powershell"]
+}

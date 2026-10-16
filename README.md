@@ -29,6 +29,23 @@ The `agents …` indicator on L3 is dual-mode: **magenta** while subagent(s) are
 
 ## Install
 
+### As a Claude Code plugin
+
+In Claude Code:
+
+```
+/plugin install cc-statusline --marketplace jimmyolo/cc-statusline
+/cc-statusline:setup
+```
+
+On a Claude Code older than 2.1.275, add the marketplace first with `/plugin marketplace add jimmyolo/cc-statusline`, then `/plugin install cc-statusline@cc-statusline`.
+
+A plugin cannot set `statusLine` itself, so `/cc-statusline:setup` does it: it copies the script into the plugin's data directory (`~/.claude/plugins/data/cc-statusline-cc-statusline/`, kept across plugin updates) and merges `statusLine` into `settings.json`, leaving every other key alone. Pass `pwsh` (`/cc-statusline:setup pwsh`) for the [PowerShell version](#powershell-version). The installer itself runs in `bash` and needs `jq`, on Windows too (Git Bash).
+
+The status line runs that copy, not the plugin directory, so after `/plugin update cc-statusline` run `/cc-statusline:setup` again to pick up the new version.
+
+### Manually
+
 ```bash
 # 1. Clone anywhere
 git clone https://github.com/jimmyolo/cc-statusline.git ~/projects/cc-statusline
@@ -233,7 +250,10 @@ To re-enable the bundled disabled blocks (Duration, Burn rate, cur-detail):
 ```bash
 bash test/smoke.sh          # cc-statusline.sh
 pwsh test/smoke.ps1         # cc-statusline.ps1
+bash test/install.sh        # scripts/install.sh (the plugin's /cc-statusline:setup)
 ```
+
+`test/install.sh` runs the installer against a throwaway config dir and checks that it merges into an existing `settings.json` rather than replacing it, keeps a symlinked one a symlink, and refuses an unknown mode or malformed JSON without writing anything.
 
 Each runs its respective script against `test/sample.json` (plus an active-transcript fixture for the agents/tools/todos widgets) and asserts:
 
