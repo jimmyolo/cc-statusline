@@ -1,31 +1,44 @@
 ---
 description: Install cc-statusline as the Claude Code status line (writes statusLine into settings.json)
 argument-hint: "[bash|pwsh]"
-allowed-tools: Bash(bash:*)
+disable-model-invocation: true
+allowed-tools:
+  - Bash(bash "${CLAUDE_PLUGIN_ROOT}/scripts/install.sh" "${CLAUDE_PLUGIN_DATA}")
+  - Bash(bash "${CLAUDE_PLUGIN_ROOT}/scripts/install.sh" "${CLAUDE_PLUGIN_DATA}" pwsh)
 ---
 
 # cc-statusline setup
 
-Point the status line at cc-statusline. `$ARGUMENTS` picks the implementation:
+Point the status line at cc-statusline. The argument the user passed picks the
+implementation:
 
-- empty or `bash` — `cc-statusline.sh` (Linux / macOS; needs `bash` 4+ and `jq`)
+- none or `bash` — `cc-statusline.sh` (Linux / macOS; needs `bash` 4+ and `jq`)
 - `pwsh` — `cc-statusline.ps1` (PowerShell 7+, for Windows)
 
-Any other value: stop and tell the user the two accepted values.
+Any other value: run nothing, and tell the user the two accepted values.
 
 ## Run
 
-Run exactly this, as one Bash call:
+Run exactly one of these, as one Bash call, copied character for character.
+Never put the user's argument into the command.
+
+For none or `bash`:
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/install.sh" "${CLAUDE_PLUGIN_DATA}" $ARGUMENTS
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/install.sh" "${CLAUDE_PLUGIN_DATA}"
+```
+
+For `pwsh`:
+
+```bash
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/install.sh" "${CLAUDE_PLUGIN_DATA}" pwsh
 ```
 
 The installer copies the script into the plugin's data directory, which survives
 plugin updates, and merges `statusLine` into
 `settings.json` in `$CLAUDE_CONFIG_DIR` (default `~/.claude`). Only `statusLine.type` and
 `statusLine.command` are written; every other setting is kept. It refuses a
-`settings.json` that is not valid JSON and leaves it untouched.
+`settings.json` that is not a single JSON object and leaves it untouched.
 
 ## Report
 
