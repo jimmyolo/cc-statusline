@@ -1,0 +1,18 @@
+{
+  "name": "cc-statusline",
+  "owner": {
+    "name": "jimmyolo"
+  },
+  "metadata": {
+    "description": "cc-statusline: a multi-line ANSI statusline for Claude Code"
+  },
+  "plugins": [
+    {
+      "name": "cc-statusline",
+      "source": "./",
+      "description": "Multi-line ANSI statusline for Claude Code: model, cost, context, rate limits, tokens, cache hit rate, live agent/tool/todo activity and the last prompt",
+      "category": "monitoring",
+      "tags": ["statusline", "monitoring", "context", "rate-limits", "cost"]
+    }
+  ]
+}
