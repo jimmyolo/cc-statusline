@@ -45,6 +45,12 @@ if ! jq -s -e '.[0].statusLine | . == null or type == "object"' "$SRC" >/dev/nul
 fi
 
 mkdir -p "$DATA_DIR" "$(dirname "$TARGET")"
+# The data-dir copy is the live script, and the README tells users to edit it,
+# so a copy that differs from the plugin's is set aside rather than overwritten.
+if [ -e "$DATA_DIR/$SCRIPT" ] && ! cmp -s "$ROOT/$SCRIPT" "$DATA_DIR/$SCRIPT"; then
+  cp "$DATA_DIR/$SCRIPT" "$DATA_DIR/$SCRIPT.bak"
+  echo "previous $SCRIPT differed from the plugin's; saved as $DATA_DIR/$SCRIPT.bak"
+fi
 cp "$ROOT/$SCRIPT" "$DATA_DIR/$SCRIPT"
 
 # The command is re-parsed by a shell on every render, so the path goes in

@@ -94,6 +94,23 @@ check "still a symlink" "$([ -L "$C/config/settings.json" ] && echo link)" link
 check "target got the statusLine" "$(jq -r .statusLine.type "$C/dotfiles/settings.json")" command
 check "no temp file left beside the target" "$(ls -A "$C/dotfiles")" settings.json
 
+echo "install: re-running setup keeps a hand-edited data-dir copy as .bak"
+C="$TMP/rerun"; mkdir -p "$C/config"
+run "$C"; check "first run: exit 0" "$?" 0
+check "first run: no .bak" "$([ -e "$C/data/cc-statusline.sh.bak" ] && echo exists || echo absent)" absent
+printf '# my edit\n' >>"$C/data/cc-statusline.sh"
+cp "$C/data/cc-statusline.sh" "$C/edited"
+run "$C"; check "second run: exit 0" "$?" 0
+check "the .bak holds the edited copy" "$(cmp -s "$C/edited" "$C/data/cc-statusline.sh.bak" && echo same)" same
+check "the data-dir copy is the repo script again" "$(cmp -s "$ROOT/cc-statusline.sh" "$C/data/cc-statusline.sh" && echo same)" same
+check "the output names the .bak path" "$(grep -c -F "$C/data/cc-statusline.sh.bak" "$C/out")" 1
+
+echo "install: re-running setup over an unmodified copy makes no .bak"
+C="$TMP/rerun-clean"; mkdir -p "$C/config"
+run "$C"; run "$C"; check "second run: exit 0" "$?" 0
+check "no .bak" "$([ -e "$C/data/cc-statusline.sh.bak" ] && echo exists || echo absent)" absent
+check "the output does not mention a .bak" "$(grep -c -F ".bak" "$C/out")" 0
+
 echo "install: pwsh mode"
 C="$TMP/pwsh"; mkdir -p "$C/config"
 run "$C" pwsh; check "exit 0" "$?" 0
