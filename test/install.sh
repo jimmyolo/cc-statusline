@@ -181,6 +181,132 @@ for suffix in "" .orig .bak; do
   check "says why" "$(grep -c -F "$C/data/cc-statusline.sh$suffix is a symlink; left untouched" "$C/out")" 1
 done
 
+echo "remove: undoes an install and keeps every other key"
+C="$TMP/rm"; mkdir -p "$C/config"
+cat >"$C/config/settings.json" <<'JSON'
+{"model": "opus", "permissions": {"allow": ["Bash(ls:*)"]}}
+JSON
+run "$C"; run "$C" remove; check "exit 0" "$?" 0
+check "statusLine gone" "$(jq 'has("statusLine")' "$C/config/settings.json")" false
+check "unrelated top-level key kept" "$(jq -r .model "$C/config/settings.json")" opus
+check "nested key kept" "$(jq -r '.permissions.allow[0]' "$C/config/settings.json")" 'Bash(ls:*)'
+check "says what it removed" "$(grep -c -F "statusLine removed from $C/config/settings.json" "$C/out")" 1
+check "data-dir copy left for plugin uninstall" "$([ -e "$C/data/cc-statusline.sh" ] && echo kept)" kept
+check "no temp file left beside settings.json" "$(ls -A "$C/config")" settings.json
+
+echo "remove: undoes a pwsh install"
+C="$TMP/rm-pwsh"; mkdir -p "$C/config"
+echo '{"model": "opus"}' >"$C/config/settings.json"
+run "$C" pwsh; run "$C" remove; check "exit 0" "$?" 0
+check "settings.json is back to the other keys" "$(jq -c . "$C/config/settings.json")" '{"model":"opus"}'
+
+echo "remove: refuses a statusLine that is not the command setup wrote"
+C="$TMP/rm-elsewhere"; mkdir -p "$C/config"
+S='{"model": "opus", "statusLine": {"type": "command", "command": "bash ~/other.sh"}}'
+printf '%s' "$S" >"$C/config/settings.json"
+cp "$C/config/settings.json" "$C/before"
+run "$C" remove; refused "$C" "$?" "statusLine is not the command setup wrote for $C/data; left untouched" "$S"
+check "settings.json byte-identical" "$(cmp -s "$C/before" "$C/config/settings.json" && echo same)" same
+check "the refusal names the manual way out" "$(grep -c -F "jq 'del(.statusLine)'" "$C/out")" 1
+
+echo "remove: the manual command in a refusal runs as printed"
+# The hint is the last line of the refusal. The config dir holds a space and a
+# quote, so the command only works if its path is quoted for the shell.
+C="$TMP/rm-hint it's"; mkdir -p "$C/config"
+printf '%s' "$S" >"$C/config/settings.json"
+chmod 600 "$C/config/settings.json"
+run "$C" remove
+HINT="$(tail -n 1 "$C/out")"
+bash -c "$HINT" </dev/null >/dev/null 2>&1; check "hint exits 0" "$?" 0
+check "hint keeps settings.json private" "$(ls -l "$C/config/settings.json" | cut -c5-10)" "------"
+check "hint removed the statusLine" "$(jq 'has("statusLine")' "$C/config/settings.json")" false
+check "hint kept the other keys" "$(jq -r .model "$C/config/settings.json")" opus
+check "hint left no temp file" "$(ls -A "$C/config")" settings.json
+
+C="$TMP/rm-suffix"; mkdir -p "$C/config"
+S="{\"statusLine\": {\"type\": \"command\", \"command\": \"bash '$C/data/cc-statusline.sh' && echo hi\"}}"
+printf '%s' "$S" >"$C/config/settings.json"
+run "$C" remove; refused "$C" "$?" "statusLine is not the command setup wrote for $C/data; left untouched" "$S"
+C="$TMP/rm-nocommand"; mkdir -p "$C/config"
+S='{"statusLine": {"type": "command"}}'
+printf '%s' "$S" >"$C/config/settings.json"
+run "$C" remove; refused "$C" "$?" "statusLine is not the command setup wrote for $C/data; left untouched" "$S"
+
+echo "remove: no settings.json"
+C="$TMP/rm-fresh"; mkdir -p "$C/config"
+run "$C" remove; check "exit 0" "$?" 0
+check "says there is nothing to remove" "$(grep -c -F "no statusLine in $C/config/settings.json; nothing to remove" "$C/out")" 1
+check "the success line carries no error prefix" "$(grep -c -F "install.sh:" "$C/out")" 0
+check "creates no file" "$(ls -A "$C/config")" ""
+check "creates no data dir" "$([ -e "$C/data" ] && echo exists || echo absent)" absent
+
+echo "remove: settings.json without a statusLine"
+C="$TMP/rm-none"; mkdir -p "$C/config"
+S='{"model":  "opus"}'
+printf '%s' "$S" >"$C/config/settings.json"
+INODE="$(ls -i "$C/config/settings.json" | awk '{print $1}')"
+run "$C" remove; check "exit 0" "$?" 0
+check "settings.json byte-identical" "$(cat "$C/config/settings.json")" "$S"
+check "settings.json not rewritten" "$(ls -i "$C/config/settings.json" | awk '{print $1}')" "$INODE"
+check "says there is nothing to remove" "$(grep -c -F "nothing to remove" "$C/out")" 1
+check "the success line carries no error prefix" "$(grep -c -F "install.sh:" "$C/out")" 0
+
+echo "remove: deletes the whole statusLine object, extra keys included"
+C="$TMP/rm-padding"; mkdir -p "$C/config"
+echo '{"model": "opus", "statusLine": {"type": "command", "command": "old", "padding": 2}}' >"$C/config/settings.json"
+run "$C"; run "$C" remove; check "exit 0" "$?" 0
+check "padding went with the statusLine" "$(jq -c . "$C/config/settings.json")" '{"model":"opus"}'
+
+echo "remove: a statusLine repointed between the guard and the write is refused"
+# The wrapper rewrites settings.json just before the write jq runs, standing in
+# for another process editing the file in that window.
+C="$TMP/rm-race"; mkdir -p "$C/config" "$C/bin"
+echo '{"model": "opus"}' >"$C/config/settings.json"
+run "$C"
+REAL_JQ="$(command -v jq)"
+cat >"$C/bin/jq" <<EOF
+#!/bin/bash
+case "\$*" in *'del(.statusLine)'*)
+  printf '%s' '{"statusLine": {"command": "bash ~/other.sh"}}' >"$C/config/settings.json" ;;
+esac
+exec "$REAL_JQ" "\$@"
+EOF
+chmod +x "$C/bin/jq"
+PATH="$C/bin:$PATH" run "$C" remove; RC=$?
+check "exits non-zero" "$([ "$RC" -ne 0 ] && echo nonzero)" nonzero
+check "the repointed statusLine survives" "$(jq -r .statusLine.command "$C/config/settings.json")" "bash ~/other.sh"
+check "says why" "$(grep -c -F "statusLine is not the command setup wrote for $C/data; left untouched" "$C/out")" 1
+check "no temp file left beside settings.json" "$(ls -A "$C/config")" settings.json
+
+echo "remove: malformed settings.json"
+C="$TMP/rm-badjson"; mkdir -p "$C/config"
+printf '{not json' >"$C/config/settings.json"
+run "$C" remove; refused "$C" "$?" "is not valid JSON; left untouched" '{not json'
+
+echo "remove: settings.json whose statusLine is not an object"
+C="$TMP/rm-badstatusline"; mkdir -p "$C/config"
+printf '{"statusLine": "bash x"}' >"$C/config/settings.json"
+run "$C" remove; refused "$C" "$?" "statusLine is not an object; left untouched" '{"statusLine": "bash x"}'
+
+echo "remove: a symlinked settings.json stays a symlink"
+C="$TMP/rm-symlink"; mkdir -p "$C/config" "$C/dotfiles"
+echo '{"model": "opus"}' >"$C/dotfiles/settings.json"
+ln -s "$C/dotfiles/settings.json" "$C/config/settings.json"
+run "$C"; run "$C" remove; check "exit 0" "$?" 0
+check "still a symlink" "$([ -L "$C/config/settings.json" ] && echo link)" link
+check "target lost the statusLine" "$(jq 'has("statusLine")' "$C/dotfiles/settings.json")" false
+check "target kept its other keys" "$(jq -r .model "$C/dotfiles/settings.json")" opus
+check "no temp file left beside the target" "$(ls -A "$C/dotfiles")" settings.json
+
+echo "remove: a data dir with shell metacharacters round-trips"
+C="$TMP/rm-meta"; mkdir -p "$C/config"
+D="$C/da ta \$(touch pwned) it's"
+echo '{"model": "opus"}' >"$C/config/settings.json"
+CLAUDE_CONFIG_DIR="$C/config" bash "$INSTALL" "$D" >"$C/out" 2>&1; check "install exit 0" "$?" 0
+CLAUDE_CONFIG_DIR="$C/config" bash "$INSTALL" "$D" remove >"$C/out" 2>&1; check "remove exit 0" "$?" 0
+check "statusLine gone" "$(jq -c . "$C/config/settings.json")" '{"model":"opus"}'
+check "nothing in the path was executed" "$([ -e "$C/pwned" ] && echo ran || echo absent)" absent
+
 C="$TMP/nodata"; mkdir -p "$C/config"
 CLAUDE_CONFIG_DIR="$C/config" bash "$INSTALL" >"$C/out" 2>&1
 check "missing data-dir argument exits non-zero" "$([ $? -ne 0 ] && echo nonzero)" nonzero
