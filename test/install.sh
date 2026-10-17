@@ -168,6 +168,19 @@ C="$TMP/badstatusline"; mkdir -p "$C/config"
 printf '{"statusLine": "bash x"}' >"$C/config/settings.json"
 run "$C"; refused "$C" "$?" "statusLine is not an object; left untouched" '{"statusLine": "bash x"}'
 
+for suffix in "" .orig .bak; do
+  echo "install: cc-statusline.sh$suffix in the data dir is a symlink"
+  C="$TMP/datalink$suffix"; mkdir -p "$C/config" "$C/data"
+  echo '{"model": "opus"}' >"$C/config/settings.json"
+  echo precious >"$C/outside"
+  ln -s "$C/outside" "$C/data/cc-statusline.sh$suffix"
+  run "$C"; RC=$?
+  check "exits non-zero" "$([ "$RC" -ne 0 ] && echo nonzero)" nonzero
+  check "the file the link points at is unchanged" "$(cat "$C/outside")" precious
+  check "settings.json left untouched" "$(cat "$C/config/settings.json")" '{"model": "opus"}'
+  check "says why" "$(grep -c -F "$C/data/cc-statusline.sh$suffix is a symlink; left untouched" "$C/out")" 1
+done
+
 C="$TMP/nodata"; mkdir -p "$C/config"
 CLAUDE_CONFIG_DIR="$C/config" bash "$INSTALL" >"$C/out" 2>&1
 check "missing data-dir argument exits non-zero" "$([ $? -ne 0 ] && echo nonzero)" nonzero

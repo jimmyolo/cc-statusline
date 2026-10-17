@@ -44,6 +44,8 @@ A plugin cannot set `statusLine` itself, so `/cc-statusline:setup` does it: it c
 
 The status line runs that copy, not the plugin directory, so after `/plugin update cc-statusline` run `/cc-statusline:setup` again to pick up the new version. If you edited that copy, setup keeps it as `<script>.bak` (`cc-statusline.sh.bak` or `cc-statusline.ps1.bak`) beside it before overwriting; the `<script>.orig` next to it is setup's reference copy, used to tell whether you edited.
 
+Because setup writes `statusLine` into your own `settings.json`, `/plugin disable cc-statusline` does not turn the status line off, and `/plugin uninstall cc-statusline` deletes the data directory, leaving `statusLine` pointing at a missing file. Before uninstalling, remove the key from `settings.json`, by hand or with `jq 'del(.statusLine)' ~/.claude/settings.json`, then write the result back.
+
 ### Manually
 
 ```bash

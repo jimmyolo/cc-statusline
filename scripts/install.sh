@@ -43,6 +43,12 @@ if ! jq -s -e '.[0].statusLine | . == null or type == "object"' "$SRC" >/dev/nul
   echo "install.sh: $SETTINGS statusLine is not an object; left untouched" >&2
   exit 1
 fi
+for f in "$DATA_DIR/$SCRIPT" "$DATA_DIR/$SCRIPT.orig" "$DATA_DIR/$SCRIPT.bak"; do
+  if [ -L "$f" ]; then
+    echo "install.sh: $f is a symlink; left untouched" >&2
+    exit 1
+  fi
+done
 
 mkdir -p "$DATA_DIR" "$(dirname "$TARGET")"
 # The data-dir copy is the live script, and users may customise it. <script>.orig
