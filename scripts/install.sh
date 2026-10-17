@@ -45,13 +45,16 @@ if ! jq -s -e '.[0].statusLine | . == null or type == "object"' "$SRC" >/dev/nul
 fi
 
 mkdir -p "$DATA_DIR" "$(dirname "$TARGET")"
-# The data-dir copy is the live script, and the README tells users to edit it,
-# so a copy that differs from the plugin's is set aside rather than overwritten.
-if [ -e "$DATA_DIR/$SCRIPT" ] && ! cmp -s "$ROOT/$SCRIPT" "$DATA_DIR/$SCRIPT"; then
+# The data-dir copy is the live script, and users may customise it. <script>.orig
+# is what the last setup installed; a copy that differs from it was edited by hand
+# and is set aside rather than overwritten. (Comparing against the plugin's current
+# script would flag every unedited copy after a plugin update.)
+if [ -e "$DATA_DIR/$SCRIPT" ] && ! cmp -s "$DATA_DIR/$SCRIPT.orig" "$DATA_DIR/$SCRIPT"; then
   cp "$DATA_DIR/$SCRIPT" "$DATA_DIR/$SCRIPT.bak"
-  echo "previous $SCRIPT differed from the plugin's; saved as $DATA_DIR/$SCRIPT.bak"
+  echo "$SCRIPT was edited since setup installed it; saved as $DATA_DIR/$SCRIPT.bak"
 fi
 cp "$ROOT/$SCRIPT" "$DATA_DIR/$SCRIPT"
+cp "$ROOT/$SCRIPT" "$DATA_DIR/$SCRIPT.orig"
 
 # The command is re-parsed by a shell on every render, so the path goes in
 # POSIX single quotes, each ' inside it written as '\''.

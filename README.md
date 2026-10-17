@@ -42,7 +42,7 @@ On a Claude Code older than 2.1.275, add the marketplace first with `/plugin mar
 
 A plugin cannot set `statusLine` itself, so `/cc-statusline:setup` does it: it copies the script into the plugin's data directory (`~/.claude/plugins/data/cc-statusline-cc-statusline/`, kept across plugin updates) and merges `statusLine` into `settings.json`, leaving every other key alone. Pass `pwsh` (`/cc-statusline:setup pwsh`) for the [PowerShell version](#powershell-version). The installer itself runs in `bash` and needs `jq`, on Windows too (Git Bash).
 
-The status line runs that copy, not the plugin directory, so after `/plugin update cc-statusline` run `/cc-statusline:setup` again to pick up the new version. If you edited that copy, setup keeps it as `cc-statusline.sh.bak` beside it before overwriting.
+The status line runs that copy, not the plugin directory, so after `/plugin update cc-statusline` run `/cc-statusline:setup` again to pick up the new version. If you edited that copy, setup keeps it as `<script>.bak` (`cc-statusline.sh.bak` or `cc-statusline.ps1.bak`) beside it before overwriting; the `<script>.orig` next to it is setup's reference copy, used to tell whether you edited.
 
 ### Manually
 
@@ -253,9 +253,9 @@ pwsh test/smoke.ps1         # cc-statusline.ps1
 bash test/install.sh        # scripts/install.sh (the plugin's /cc-statusline:setup)
 ```
 
-`test/install.sh` runs the installer against a throwaway config dir and checks that it merges into an existing `settings.json` rather than replacing it, keeps a symlinked one a symlink, and refuses an unknown mode or malformed JSON without writing anything.
+`test/install.sh` runs the installer against a throwaway config dir and checks that it merges into an existing `settings.json` rather than replacing it, keeps a symlinked one a symlink, refuses an unknown mode or malformed JSON without writing anything, and makes a `.bak` of the data-dir copy only when you edited it, not on a plain plugin update.
 
-Each runs its respective script against `test/sample.json` (plus an active-transcript fixture for the agents/tools/todos widgets) and asserts:
+`smoke.sh` and `smoke.ps1` each run their script against `test/sample.json` (plus an active-transcript fixture for the agents/tools/todos widgets) and assert:
 
 - Output contains at least 3 non-empty lines.
 - Output contains expected markers (model name, version, context size, cost, rate limits, tokens, cache hit, vim mode, agents/tools/todos).

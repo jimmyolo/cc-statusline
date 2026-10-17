@@ -44,6 +44,8 @@ plugin updates, and merges `statusLine` into
 
 - On success, relay the `statusLine.command` line it printed. The status line
   picks it up on the next render; no restart is needed.
+- If the installer printed a `saved as …bak` line, relay it verbatim: the user
+  had edited the installed copy, and this is where that edit went.
 - On failure, relay the error verbatim. If `jq` is missing, say so and stop —
   do not edit `settings.json` by hand.
 - Remind the user to run `/cc-statusline:setup` again after

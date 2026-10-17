@@ -111,6 +111,27 @@ run "$C"; run "$C"; check "second run: exit 0" "$?" 0
 check "no .bak" "$([ -e "$C/data/cc-statusline.sh.bak" ] && echo exists || echo absent)" absent
 check "the output does not mention a .bak" "$(grep -c -F ".bak" "$C/out")" 0
 
+echo "install: a plugin update makes no .bak unless the copy was edited"
+# The installer runs from a copied plugin root so its script can change between
+# runs, as it does after /plugin update.
+C="$TMP/update"; mkdir -p "$C/config" "$C/plugin/scripts"
+cp "$INSTALL" "$C/plugin/scripts/"; cp "$ROOT/cc-statusline.sh" "$C/plugin/"
+runp() { CLAUDE_CONFIG_DIR="$C/config" bash "$C/plugin/scripts/install.sh" "$C/data" >"$C/out" 2>&1; }
+runp; printf '# v2\n' >>"$C/plugin/cc-statusline.sh"
+runp; check "update over an unedited copy: exit 0" "$?" 0
+check "update over an unedited copy: no .bak" "$([ -e "$C/data/cc-statusline.sh.bak" ] && echo exists || echo absent)" absent
+check "update over an unedited copy: the copy is the new script" "$(cmp -s "$C/plugin/cc-statusline.sh" "$C/data/cc-statusline.sh" && echo same)" same
+printf '# my edit\n' >>"$C/data/cc-statusline.sh"; cp "$C/data/cc-statusline.sh" "$C/edited"
+printf '# v3\n' >>"$C/plugin/cc-statusline.sh"
+runp; check "update after an edit: exit 0" "$?" 0
+check "update after an edit: .bak holds the edited copy" "$(cmp -s "$C/edited" "$C/data/cc-statusline.sh.bak" && echo same)" same
+check "update after an edit: the copy is the new script" "$(cmp -s "$C/plugin/cc-statusline.sh" "$C/data/cc-statusline.sh" && echo same)" same
+printf '# v4\n' >>"$C/plugin/cc-statusline.sh"
+runp; check "second update, no new edit: exit 0" "$?" 0
+check "second update, no new edit: .bak still holds the edited copy" "$(cmp -s "$C/edited" "$C/data/cc-statusline.sh.bak" && echo same)" same
+check "second update, no new edit: the output does not mention a .bak" "$(grep -c -F ".bak" "$C/out")" 0
+check "second update, no new edit: the copy is the new script" "$(cmp -s "$C/plugin/cc-statusline.sh" "$C/data/cc-statusline.sh" && echo same)" same
+
 echo "install: pwsh mode"
 C="$TMP/pwsh"; mkdir -p "$C/config"
 run "$C" pwsh; check "exit 0" "$?" 0
