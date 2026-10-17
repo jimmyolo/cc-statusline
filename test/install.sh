@@ -139,6 +139,61 @@ check "ps1 copied into the data dir" "$(cmp -s "$ROOT/cc-statusline.ps1" "$C/dat
 check "statusLine.command runs pwsh without a profile" \
   "$(jq -r .statusLine.command "$C/config/settings.json")" "pwsh -NoProfile -File '$C/data/cc-statusline.ps1'"
 
+echo "install: pwsh mode prints no picked line"
+check "explicit pwsh says nothing about picking" "$(grep -c -F "picked" "$C/out")" 0
+
+# Auto mode reads the OS from uname and pwsh from PATH, so each case stubs both.
+# stub <bin-dir> <name> <stdout>: an executable that prints <stdout>.
+stub() {
+  mkdir -p "$1"
+  printf '#!/bin/bash\necho %s\n' "$3" >"$1/$2"
+  chmod +x "$1/$2"
+}
+
+echo "install: auto mode on a non-Windows host picks the shell script, even with pwsh on PATH"
+C="$TMP/auto-linux"; mkdir -p "$C/config"
+stub "$C/bin" uname Linux; stub "$C/bin" pwsh ""
+PATH="$C/bin:$PATH" run "$C"; check "exit 0" "$?" 0
+check "sh copied into the data dir" "$(cmp -s "$ROOT/cc-statusline.sh" "$C/data/cc-statusline.sh" && echo same)" same
+check "ps1 not copied" "$([ -e "$C/data/cc-statusline.ps1" ] && echo exists || echo absent)" absent
+check "statusLine.command runs bash" \
+  "$(jq -r .statusLine.command "$C/config/settings.json")" "bash '$C/data/cc-statusline.sh'"
+check "says what it picked" "$(grep -c -x -F "picked cc-statusline.sh: not Windows" "$C/out")" 1
+check "the picked line carries no error prefix" "$(grep -c -F "install.sh:" "$C/out")" 0
+
+echo "install: auto mode on Windows with pwsh on PATH picks the PowerShell port"
+C="$TMP/auto-win-pwsh"; mkdir -p "$C/config"
+stub "$C/bin" uname MINGW64_NT-10.0-19045; stub "$C/bin" pwsh ""
+PATH="$C/bin:$PATH" run "$C"; check "exit 0" "$?" 0
+check "ps1 copied into the data dir" "$(cmp -s "$ROOT/cc-statusline.ps1" "$C/data/cc-statusline.ps1" && echo same)" same
+check "sh not copied" "$([ -e "$C/data/cc-statusline.sh" ] && echo exists || echo absent)" absent
+check "statusLine.command runs pwsh without a profile" \
+  "$(jq -r .statusLine.command "$C/config/settings.json")" "pwsh -NoProfile -File '$C/data/cc-statusline.ps1'"
+check "says what it picked" "$(grep -c -x -F "picked cc-statusline.ps1: Windows and pwsh on PATH" "$C/out")" 1
+check "the picked line carries no error prefix" "$(grep -c -F "install.sh:" "$C/out")" 0
+
+echo "install: auto mode on Windows without pwsh falls back to the shell script"
+# A PATH prefix would still find a real pwsh further down, so PATH is only a
+# directory of links to what the installer calls, plus the uname stub.
+C="$TMP/auto-win-nopwsh"; mkdir -p "$C/config" "$C/bin"
+stub "$C/bin" uname MSYS_NT-10.0
+for tool in bash jq mktemp mv rm cp cmp mkdir dirname readlink; do
+  ln -s "$(command -v "$tool")" "$C/bin/$tool"
+done
+PATH="$C/bin" run "$C"; check "exit 0" "$?" 0
+check "sh copied into the data dir" "$(cmp -s "$ROOT/cc-statusline.sh" "$C/data/cc-statusline.sh" && echo same)" same
+check "ps1 not copied" "$([ -e "$C/data/cc-statusline.ps1" ] && echo exists || echo absent)" absent
+check "statusLine.command runs bash" \
+  "$(jq -r .statusLine.command "$C/config/settings.json")" "bash '$C/data/cc-statusline.sh'"
+check "says what it picked" "$(grep -c -x -F "picked cc-statusline.sh: Windows but pwsh is not on PATH" "$C/out")" 1
+
+echo "install: a refused auto run prints no picked line"
+C="$TMP/auto-refused"; mkdir -p "$C/config"
+stub "$C/bin" uname Linux
+printf '{not json' >"$C/config/settings.json"
+PATH="$C/bin:$PATH" run "$C"; refused "$C" "$?" "is not valid JSON; left untouched" '{not json'
+check "no picked line" "$(grep -c -F "picked" "$C/out")" 0
+
 echo "install: rejects what it cannot do safely"
 C="$TMP/badmode"; mkdir -p "$C/config"
 run "$C" zsh; check "unknown mode exits non-zero" "$([ $? -ne 0 ] && echo nonzero)" nonzero
@@ -198,6 +253,13 @@ echo "remove: undoes a pwsh install"
 C="$TMP/rm-pwsh"; mkdir -p "$C/config"
 echo '{"model": "opus"}' >"$C/config/settings.json"
 run "$C" pwsh; run "$C" remove; check "exit 0" "$?" 0
+check "settings.json is back to the other keys" "$(jq -c . "$C/config/settings.json")" '{"model":"opus"}'
+
+echo "remove: undoes an auto install that picked the PowerShell port"
+C="$TMP/rm-auto-win"; mkdir -p "$C/config"
+echo '{"model": "opus"}' >"$C/config/settings.json"
+stub "$C/bin" uname MINGW64_NT-10.0-19045; stub "$C/bin" pwsh ""
+PATH="$C/bin:$PATH" run "$C"; PATH="$C/bin:$PATH" run "$C" remove; check "exit 0" "$?" 0
 check "settings.json is back to the other keys" "$(jq -c . "$C/config/settings.json")" '{"model":"opus"}'
 
 echo "remove: refuses a statusLine that is not the command setup wrote"

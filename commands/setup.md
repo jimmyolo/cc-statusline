@@ -1,10 +1,9 @@
 ---
 description: Install cc-statusline as the Claude Code status line (writes statusLine into settings.json), or remove it again
-argument-hint: "[bash|pwsh|remove]"
+argument-hint: "[remove]"
 disable-model-invocation: true
 allowed-tools:
   - Bash(bash "${CLAUDE_PLUGIN_ROOT}/scripts/install.sh" "${CLAUDE_PLUGIN_DATA}")
-  - Bash(bash "${CLAUDE_PLUGIN_ROOT}/scripts/install.sh" "${CLAUDE_PLUGIN_DATA}" pwsh)
   - Bash(bash "${CLAUDE_PLUGIN_ROOT}/scripts/install.sh" "${CLAUDE_PLUGIN_DATA}" remove)
 ---
 
@@ -13,27 +12,22 @@ allowed-tools:
 Point the status line at cc-statusline, or take it off again. The argument the
 user passed picks what to do:
 
-- none or `bash` — `cc-statusline.sh` (Linux / macOS; needs `bash` 4+ and `jq`)
-- `pwsh` — `cc-statusline.ps1` (PowerShell 7+, for Windows)
+- none — install the status line; the installer picks `cc-statusline.sh` (needs
+  `bash` 4+ and `jq`) and switches to `cc-statusline.ps1` (PowerShell 7+) only on
+  Windows with `pwsh` on PATH
 - `remove` — delete the `statusLine` that setup wrote, before uninstalling the plugin
 
-Any other value: run nothing, and tell the user the three accepted values.
+Any other value: run nothing, and tell the user the accepted values (none, or `remove`).
 
 ## Run
 
 Run exactly one of these, as one Bash call, copied character for character.
 Never put the user's argument into the command.
 
-For none or `bash`:
+For none:
 
 ```bash
 bash "${CLAUDE_PLUGIN_ROOT}/scripts/install.sh" "${CLAUDE_PLUGIN_DATA}"
-```
-
-For `pwsh`:
-
-```bash
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/install.sh" "${CLAUDE_PLUGIN_DATA}" pwsh
 ```
 
 For `remove`:
@@ -59,8 +53,10 @@ uninstalling the plugin removes the data directory.
 
 ## Report
 
-- On success, relay the `statusLine.command` line it printed. The status line
-  picks it up on the next render; no restart is needed.
+- On success, relay the `picked …` line it printed, so a Windows user who got
+  `cc-statusline.sh` because `pwsh` is missing sees why, and the
+  `statusLine.command` line. The status line picks it up on the next render; no
+  restart is needed.
 - If the installer printed a `saved as …bak` line, relay it verbatim: the user
   had edited the installed copy, and this is where that edit went.
 - On `remove`, relay the line it printed (`statusLine removed from …`, or

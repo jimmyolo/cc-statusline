@@ -28,9 +28,10 @@ Plugin:
 
 ```
 /plugin install cc-statusline --marketplace jimmyolo/cc-statusline
-/cc-statusline:setup          # or: /cc-statusline:setup pwsh
+/cc-statusline:setup
 ```
 
+- On Windows, setup installs the PowerShell port when `pwsh` is on PATH, else the shell script
 - Claude Code < 2.1.275: `/plugin marketplace add jimmyolo/cc-statusline` first, then `/plugin install cc-statusline@cc-statusline`
 - After `/plugin update cc-statusline`: re-run `/cc-statusline:setup`
 - Before `/plugin uninstall`: `/cc-statusline:setup remove` (deletes the whole `statusLine` object, if setup wrote it)

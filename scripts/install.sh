@@ -1,29 +1,46 @@
 #!/bin/bash
 # Installs cc-statusline as the Claude Code status line. Run by /cc-statusline:setup.
 #
-# Usage: install.sh <data-dir> [bash|pwsh|remove]
+# Usage: install.sh <data-dir> [auto|bash|pwsh|remove]
 #
 # A plugin cannot set statusLine itself, and its own directory is versioned per
 # commit, so the script is copied into <data-dir> (the plugin's data directory,
 # kept across updates) and settings.json is pointed at that copy. Only
 # statusLine.type and statusLine.command are written; every other key survives.
 #
+# "auto" (the default) installs the shell script, and the PowerShell port only on
+# Windows with pwsh on PATH. "bash" and "pwsh" force one script.
+#
 # "remove" undoes that: it deletes statusLine, but only while it still points at
 # this data dir's copy. The data-dir files stay; uninstalling the plugin deletes them.
 
 set -euo pipefail
 
-DATA_DIR="${1:?usage: install.sh <data-dir> [bash|pwsh|remove]}"
-MODE="${2:-bash}"
+DATA_DIR="${1:?usage: install.sh <data-dir> [auto|bash|pwsh|remove]}"
+MODE="${2:-auto}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SETTINGS="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json"
 
+PICKED=""
 case "$MODE" in
+  auto) ;;
   bash) SCRIPT="cc-statusline.sh" ;;
   pwsh) SCRIPT="cc-statusline.ps1" ;;
   remove) ;;
-  *) echo "install.sh: unknown mode '$MODE' (expected bash, pwsh or remove)" >&2; exit 2 ;;
+  *) echo "install.sh: unknown mode '$MODE' (expected auto, bash, pwsh or remove)" >&2; exit 2 ;;
 esac
+
+if [ "$MODE" = auto ]; then
+  case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*)
+      if command -v pwsh >/dev/null; then
+        SCRIPT="cc-statusline.ps1"; PICKED="Windows and pwsh on PATH"
+      else
+        SCRIPT="cc-statusline.sh"; PICKED="Windows but pwsh is not on PATH"
+      fi ;;
+    *) SCRIPT="cc-statusline.sh"; PICKED="not Windows" ;;
+  esac
+fi
 
 command -v jq >/dev/null || { echo "install.sh: jq is required" >&2; exit 1; }
 
@@ -106,6 +123,7 @@ else
       exit 1
     fi
   done
+  [ -z "$PICKED" ] || echo "picked $SCRIPT: $PICKED"
 
   mkdir -p "$DATA_DIR" "$(dirname "$TARGET")"
   # The data-dir copy is the live script, and users may customise it. <script>.orig
