@@ -14,7 +14,8 @@ user passed picks what to do:
 
 - none — install the status line; the installer picks `cc-statusline.sh` (needs
   `bash` 4+ and `jq`) and switches to `cc-statusline.ps1` (PowerShell 7+) only on
-  Windows with `pwsh` on PATH
+  Windows with `pwsh` on PATH; a re-run keeps the script already installed, and
+  `remove` followed by a fresh setup detects again
 - `remove` — delete the `statusLine` that setup wrote, before uninstalling the plugin
 
 Any other value: run nothing, and tell the user the accepted values (none, or `remove`).

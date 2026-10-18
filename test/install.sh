@@ -179,16 +179,16 @@ check "says what it picked" "$(grep -c -x -F "picked cc-statusline.ps1: Windows 
 check "the picked line carries no error prefix" "$(grep -c -F "install.sh:" "$C/out")" 0
 
 echo "install: auto mode on Windows without pwsh falls back to the shell script"
-# A PATH prefix would still find a real pwsh further down, so PATH is the host's
-# own with every directory that holds a pwsh dropped, plus the uname stub.
+# A PATH prefix would still find a real pwsh further down, and dropping the host
+# directories that hold one would drop the tools the installer needs with them. So
+# PATH is a directory of symlinks to exactly those tools, plus the uname stub. The
+# list must cover every external command install.sh runs (and bash, which runs it).
 C="$TMP/auto-win-nopwsh"; mkdir -p "$C/config"
 stub "$C/bin" uname MSYS_NT-10.0
-NOPWSH="$C/bin"
-IFS=: read -ra DIRS <<<"$PATH"
-for d in "${DIRS[@]}"; do
-  [ -x "$d/pwsh" ] || NOPWSH="$NOPWSH:$d"
+for t in bash jq cmp cp mv mkdir mktemp dirname readlink rm; do
+  ln -s "$(command -v "$t")" "$C/bin/$t"
 done
-PATH="$NOPWSH" run "$C"; check "exit 0" "$?" 0
+PATH="$C/bin" run "$C"; check "exit 0" "$?" 0
 check "sh copied into the data dir" "$(cmp -s "$ROOT/cc-statusline.sh" "$C/data/cc-statusline.sh" && echo same)" same
 check "ps1 not copied" "$([ -e "$C/data/cc-statusline.ps1" ] && echo exists || echo absent)" absent
 check "statusLine.command runs bash" \
@@ -215,7 +215,7 @@ check "sh copied into the data dir" "$(cmp -s "$ROOT/cc-statusline.sh" "$C/data/
 check "ps1 not copied" "$([ -e "$C/data/cc-statusline.ps1" ] && echo exists || echo absent)" absent
 check "statusLine.command still runs bash" \
   "$(jq -r .statusLine.command "$C/config/settings.json")" "bash '$C/data/cc-statusline.sh'"
-check "says it kept the script" "$(grep -c -x -F "picked cc-statusline.sh: kept the script setup installed before" "$C/out")" 1
+check "says it kept the script" "$(grep -c -x -F "picked cc-statusline.sh: kept the script setup installed before (run setup remove, then setup, to detect again)" "$C/out")" 1
 
 echo "install: auto mode keeps the PowerShell port setup installed before, even off Windows"
 C="$TMP/sticky-ps1"; mkdir -p "$C/config"
@@ -226,7 +226,7 @@ check "ps1 copied into the data dir" "$(cmp -s "$ROOT/cc-statusline.ps1" "$C/dat
 check "sh not copied" "$([ -e "$C/data/cc-statusline.sh" ] && echo exists || echo absent)" absent
 check "statusLine.command still runs pwsh" \
   "$(jq -r .statusLine.command "$C/config/settings.json")" "pwsh -NoProfile -File '$C/data/cc-statusline.ps1'"
-check "says it kept the script" "$(grep -c -x -F "picked cc-statusline.ps1: kept the script setup installed before" "$C/out")" 1
+check "says it kept the script" "$(grep -c -x -F "picked cc-statusline.ps1: kept the script setup installed before (run setup remove, then setup, to detect again)" "$C/out")" 1
 
 echo "install: auto mode detects again when the statusLine is not what setup wrote"
 C="$TMP/sticky-elsewhere"; mkdir -p "$C/config"
@@ -245,10 +245,28 @@ PATH="$C/bin:$PATH" run "$C"; refused "$C" "$?" "is not valid JSON; left untouch
 check "no picked line" "$(grep -c -F "picked" "$C/out")" 0
 
 echo "install: an auto run that fails after the checks prints no picked line"
-# A directory where the script copy should be makes the install fail at the copy.
+# A directory where the script copy should be makes the install fail at the .bak
+# set-aside cp, which fails before settings.json is written.
 C="$TMP/auto-copyfail"; mkdir -p "$C/config" "$C/data/cc-statusline.sh"
 run "$C"; check "exits non-zero" "$([ $? -ne 0 ] && echo nonzero)" nonzero
 check "no picked line" "$(grep -c -F "picked" "$C/out")" 0
+
+echo "install: an auto run whose settings.json write fails prints no picked line"
+# A read-only config dir lets every guard and the script copy pass, then fails
+# the temp file the write makes beside settings.json.
+C="$TMP/auto-writefail"; mkdir -p "$C/config"
+echo '{"model": "opus"}' >"$C/config/settings.json"
+if [ "$(id -u)" -eq 0 ]; then
+  echo "  skip (root ignores directory permissions)"
+else
+  chmod u-w "$C/config"
+  run "$C"; RC=$?
+  chmod u+w "$C/config"
+  check "exits non-zero" "$([ "$RC" -ne 0 ] && echo nonzero)" nonzero
+  check "no picked line" "$(grep -c -F "picked" "$C/out")" 0
+  check "says it could not rewrite" "$(grep -c -F "could not rewrite" "$C/out")" 1
+  check "settings.json left untouched" "$(cat "$C/config/settings.json")" '{"model": "opus"}'
+fi
 
 echo "install: rejects what it cannot do safely"
 C="$TMP/badmode"; mkdir -p "$C/config"

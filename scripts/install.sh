@@ -9,7 +9,8 @@
 # statusLine.type and statusLine.command are written; every other key survives.
 #
 # "auto" (the default) installs the shell script, and the PowerShell port only on
-# Windows with pwsh on PATH; a re-run keeps the script the last run installed.
+# Windows with pwsh on PATH. An auto re-run keeps the script last installed, but
+# only while statusLine still holds the exact command setup wrote for this data dir.
 # "bash" and "pwsh" force one script.
 #
 # "remove" undoes that: it deletes statusLine, but only while it still points at
@@ -70,7 +71,7 @@ pick_auto() {
   current="$(jq -s -r '.[0].statusLine.command // empty' "$SRC")"
   for s in cc-statusline.sh cc-statusline.ps1; do
     if [ "$current" = "$(cmd_for "$s")" ]; then
-      SCRIPT="$s"; PICKED="kept the script setup installed before"
+      SCRIPT="$s"; PICKED="kept the script setup installed before (run setup remove, then setup, to detect again)"
       return
     fi
   done
