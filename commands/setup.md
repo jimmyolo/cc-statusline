@@ -53,10 +53,11 @@ uninstalling the plugin removes the data directory.
 
 ## Report
 
-- On success, relay the `picked …` line it printed, so a Windows user who got
-  `cc-statusline.sh` because `pwsh` is missing sees why, and the
-  `statusLine.command` line. The status line picks it up on the next render; no
-  restart is needed.
+- On success, relay the `statusLine.command` line; the status line picks it up
+  on the next render, no restart needed.
+- Relay the `picked …` line too, so the user sees which script was chosen and
+  why (for example, a Windows user who got `cc-statusline.sh` because `pwsh` is
+  missing).
 - If the installer printed a `saved as …bak` line, relay it verbatim: the user
   had edited the installed copy, and this is where that edit went.
 - On `remove`, relay the line it printed (`statusLine removed from …`, or

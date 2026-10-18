@@ -9,7 +9,8 @@
 # statusLine.type and statusLine.command are written; every other key survives.
 #
 # "auto" (the default) installs the shell script, and the PowerShell port only on
-# Windows with pwsh on PATH. "bash" and "pwsh" force one script.
+# Windows with pwsh on PATH; a re-run keeps the script the last run installed.
+# "bash" and "pwsh" force one script.
 #
 # "remove" undoes that: it deletes statusLine, but only while it still points at
 # this data dir's copy. The data-dir files stay; uninstalling the plugin deletes them.
@@ -22,25 +23,6 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SETTINGS="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json"
 
 PICKED=""
-case "$MODE" in
-  auto) ;;
-  bash) SCRIPT="cc-statusline.sh" ;;
-  pwsh) SCRIPT="cc-statusline.ps1" ;;
-  remove) ;;
-  *) echo "install.sh: unknown mode '$MODE' (expected auto, bash, pwsh or remove)" >&2; exit 2 ;;
-esac
-
-if [ "$MODE" = auto ]; then
-  case "$(uname -s)" in
-    MINGW*|MSYS*|CYGWIN*)
-      if command -v pwsh >/dev/null; then
-        SCRIPT="cc-statusline.ps1"; PICKED="Windows and pwsh on PATH"
-      else
-        SCRIPT="cc-statusline.sh"; PICKED="Windows but pwsh is not on PATH"
-      fi ;;
-    *) SCRIPT="cc-statusline.sh"; PICKED="not Windows" ;;
-  esac
-fi
 
 command -v jq >/dev/null || { echo "install.sh: jq is required" >&2; exit 1; }
 
@@ -79,6 +61,39 @@ if ! jq -s -e '.[0].statusLine | . == null or type == "object"' "$SRC" >/dev/nul
   echo "install.sh: $SETTINGS statusLine is not an object; left untouched" >&2
   exit 1
 fi
+
+# Auto keeps the script a statusLine written by an earlier setup run already
+# points at, so a re-run never switches a user between the two scripts. Only a
+# first install, or a statusLine setup did not write, is detected from the host.
+pick_auto() {
+  local current os s
+  current="$(jq -s -r '.[0].statusLine.command // empty' "$SRC")"
+  for s in cc-statusline.sh cc-statusline.ps1; do
+    if [ "$current" = "$(cmd_for "$s")" ]; then
+      SCRIPT="$s"; PICKED="kept the script setup installed before"
+      return
+    fi
+  done
+  os="$(uname -s 2>/dev/null)" || os=""
+  case "$os" in
+    "") SCRIPT="cc-statusline.sh"; PICKED="could not detect the OS" ;;
+    MINGW*|MSYS*|CYGWIN*)
+      if command -v pwsh >/dev/null; then
+        SCRIPT="cc-statusline.ps1"; PICKED="Windows and pwsh on PATH"
+      else
+        SCRIPT="cc-statusline.sh"; PICKED="Windows but pwsh is not on PATH"
+      fi ;;
+    *) SCRIPT="cc-statusline.sh"; PICKED="not Windows" ;;
+  esac
+}
+
+case "$MODE" in
+  auto) pick_auto ;;
+  bash) SCRIPT="cc-statusline.sh" ;;
+  pwsh) SCRIPT="cc-statusline.ps1" ;;
+  remove) ;;
+  *) echo "install.sh: unknown mode '$MODE' (expected auto, bash, pwsh or remove)" >&2; exit 2 ;;
+esac
 
 # Renamed over the target from the same directory, so a reader never sees a
 # half-written settings.json. A failed jq leaves the target as it was, and its
@@ -123,7 +138,6 @@ else
       exit 1
     fi
   done
-  [ -z "$PICKED" ] || echo "picked $SCRIPT: $PICKED"
 
   mkdir -p "$DATA_DIR" "$(dirname "$TARGET")"
   # The data-dir copy is the live script, and users may customise it. <script>.orig
@@ -140,6 +154,7 @@ else
   write_settings '(.[0] // {}) | .statusLine = ((.statusLine // {}) + {type: "command", command: $cmd})' \
     --arg cmd "$CMD" \
     || { echo "install.sh: could not rewrite $SETTINGS; left untouched: $WRITE_ERR" >&2; exit 1; }
+  [ -z "$PICKED" ] || echo "picked $SCRIPT: $PICKED"
   echo "statusLine.command = $CMD"
   echo "written to $SETTINGS"
 fi

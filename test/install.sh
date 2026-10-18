@@ -22,6 +22,18 @@ check() { # check <name> <actual> <expected>
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
+# stub <bin-dir> <name> <stdout>: an executable that prints <stdout>.
+stub() {
+  mkdir -p "$1"
+  printf '#!/bin/bash\necho %s\n' "$3" >"$1/$2"
+  chmod +x "$1/$2"
+}
+
+# The installer's default mode reads the host's uname, so every case runs as if
+# on Linux unless it puts its own uname stub ahead of this one.
+stub "$TMP/default-bin" uname Linux
+PATH="$TMP/default-bin:$PATH"
+
 run() { # run <case-dir> <args...>
   local dir="$1"; shift
   CLAUDE_CONFIG_DIR="$dir/config" bash "$INSTALL" "$dir/data" "$@" >"$dir/out" 2>&1
@@ -142,14 +154,8 @@ check "statusLine.command runs pwsh without a profile" \
 echo "install: pwsh mode prints no picked line"
 check "explicit pwsh says nothing about picking" "$(grep -c -F "picked" "$C/out")" 0
 
-# Auto mode reads the OS from uname and pwsh from PATH, so each case stubs both.
-# stub <bin-dir> <name> <stdout>: an executable that prints <stdout>.
-stub() {
-  mkdir -p "$1"
-  printf '#!/bin/bash\necho %s\n' "$3" >"$1/$2"
-  chmod +x "$1/$2"
-}
-
+# Auto mode reads the OS from uname and pwsh from PATH, so the cases about it
+# stub both.
 echo "install: auto mode on a non-Windows host picks the shell script, even with pwsh on PATH"
 C="$TMP/auto-linux"; mkdir -p "$C/config"
 stub "$C/bin" uname Linux; stub "$C/bin" pwsh ""
@@ -173,25 +179,75 @@ check "says what it picked" "$(grep -c -x -F "picked cc-statusline.ps1: Windows 
 check "the picked line carries no error prefix" "$(grep -c -F "install.sh:" "$C/out")" 0
 
 echo "install: auto mode on Windows without pwsh falls back to the shell script"
-# A PATH prefix would still find a real pwsh further down, so PATH is only a
-# directory of links to what the installer calls, plus the uname stub.
-C="$TMP/auto-win-nopwsh"; mkdir -p "$C/config" "$C/bin"
+# A PATH prefix would still find a real pwsh further down, so PATH is the host's
+# own with every directory that holds a pwsh dropped, plus the uname stub.
+C="$TMP/auto-win-nopwsh"; mkdir -p "$C/config"
 stub "$C/bin" uname MSYS_NT-10.0
-for tool in bash jq mktemp mv rm cp cmp mkdir dirname readlink; do
-  ln -s "$(command -v "$tool")" "$C/bin/$tool"
+NOPWSH="$C/bin"
+IFS=: read -ra DIRS <<<"$PATH"
+for d in "${DIRS[@]}"; do
+  [ -x "$d/pwsh" ] || NOPWSH="$NOPWSH:$d"
 done
-PATH="$C/bin" run "$C"; check "exit 0" "$?" 0
+PATH="$NOPWSH" run "$C"; check "exit 0" "$?" 0
 check "sh copied into the data dir" "$(cmp -s "$ROOT/cc-statusline.sh" "$C/data/cc-statusline.sh" && echo same)" same
 check "ps1 not copied" "$([ -e "$C/data/cc-statusline.ps1" ] && echo exists || echo absent)" absent
 check "statusLine.command runs bash" \
   "$(jq -r .statusLine.command "$C/config/settings.json")" "bash '$C/data/cc-statusline.sh'"
 check "says what it picked" "$(grep -c -x -F "picked cc-statusline.sh: Windows but pwsh is not on PATH" "$C/out")" 1
 
+echo "install: auto mode with a failing uname falls back to the shell script and says why"
+C="$TMP/auto-nouname"; mkdir -p "$C/config" "$C/bin"
+printf '#!/bin/bash\nexit 1\n' >"$C/bin/uname"; chmod +x "$C/bin/uname"
+stub "$C/bin" pwsh ""
+PATH="$C/bin:$PATH" run "$C"; check "exit 0" "$?" 0
+check "statusLine.command runs bash" \
+  "$(jq -r .statusLine.command "$C/config/settings.json")" "bash '$C/data/cc-statusline.sh'"
+check "says the OS was not detected" "$(grep -c -x -F "picked cc-statusline.sh: could not detect the OS" "$C/out")" 1
+
+# Re-running setup keeps the script an earlier run installed, so a user who moved
+# to the other script, or who customised their copy, is not switched by a re-run.
+echo "install: auto mode keeps the shell script setup installed before, even on Windows with pwsh"
+C="$TMP/sticky-sh"; mkdir -p "$C/config"
+stub "$C/bin" uname MINGW64_NT-10.0-19045; stub "$C/bin" pwsh ""
+jq -n --arg c "bash '$C/data/cc-statusline.sh'" '{statusLine: {type: "command", command: $c}}' >"$C/config/settings.json"
+PATH="$C/bin:$PATH" run "$C"; check "exit 0" "$?" 0
+check "sh copied into the data dir" "$(cmp -s "$ROOT/cc-statusline.sh" "$C/data/cc-statusline.sh" && echo same)" same
+check "ps1 not copied" "$([ -e "$C/data/cc-statusline.ps1" ] && echo exists || echo absent)" absent
+check "statusLine.command still runs bash" \
+  "$(jq -r .statusLine.command "$C/config/settings.json")" "bash '$C/data/cc-statusline.sh'"
+check "says it kept the script" "$(grep -c -x -F "picked cc-statusline.sh: kept the script setup installed before" "$C/out")" 1
+
+echo "install: auto mode keeps the PowerShell port setup installed before, even off Windows"
+C="$TMP/sticky-ps1"; mkdir -p "$C/config"
+stub "$C/bin" uname Linux
+jq -n --arg c "pwsh -NoProfile -File '$C/data/cc-statusline.ps1'" '{statusLine: {type: "command", command: $c}}' >"$C/config/settings.json"
+PATH="$C/bin:$PATH" run "$C"; check "exit 0" "$?" 0
+check "ps1 copied into the data dir" "$(cmp -s "$ROOT/cc-statusline.ps1" "$C/data/cc-statusline.ps1" && echo same)" same
+check "sh not copied" "$([ -e "$C/data/cc-statusline.sh" ] && echo exists || echo absent)" absent
+check "statusLine.command still runs pwsh" \
+  "$(jq -r .statusLine.command "$C/config/settings.json")" "pwsh -NoProfile -File '$C/data/cc-statusline.ps1'"
+check "says it kept the script" "$(grep -c -x -F "picked cc-statusline.ps1: kept the script setup installed before" "$C/out")" 1
+
+echo "install: auto mode detects again when the statusLine is not what setup wrote"
+C="$TMP/sticky-elsewhere"; mkdir -p "$C/config"
+stub "$C/bin" uname MINGW64_NT-10.0-19045; stub "$C/bin" pwsh ""
+echo '{"statusLine": {"type": "command", "command": "bash ~/other.sh"}}' >"$C/config/settings.json"
+PATH="$C/bin:$PATH" run "$C"; check "exit 0" "$?" 0
+check "statusLine.command runs pwsh without a profile" \
+  "$(jq -r .statusLine.command "$C/config/settings.json")" "pwsh -NoProfile -File '$C/data/cc-statusline.ps1'"
+check "says what it picked" "$(grep -c -x -F "picked cc-statusline.ps1: Windows and pwsh on PATH" "$C/out")" 1
+
 echo "install: a refused auto run prints no picked line"
 C="$TMP/auto-refused"; mkdir -p "$C/config"
 stub "$C/bin" uname Linux
 printf '{not json' >"$C/config/settings.json"
 PATH="$C/bin:$PATH" run "$C"; refused "$C" "$?" "is not valid JSON; left untouched" '{not json'
+check "no picked line" "$(grep -c -F "picked" "$C/out")" 0
+
+echo "install: an auto run that fails after the checks prints no picked line"
+# A directory where the script copy should be makes the install fail at the copy.
+C="$TMP/auto-copyfail"; mkdir -p "$C/config" "$C/data/cc-statusline.sh"
+run "$C"; check "exits non-zero" "$([ $? -ne 0 ] && echo nonzero)" nonzero
 check "no picked line" "$(grep -c -F "picked" "$C/out")" 0
 
 echo "install: rejects what it cannot do safely"
