@@ -251,6 +251,20 @@ try {
     $wtMatches = [regex]::Matches($wtLine, "`e\]8;;([^`a]*)`a")
     $wtLast = if ($wtMatches.Count -gt 0) { $wtMatches[$wtMatches.Count - 1].Groups[1].Value } else { '' }
     Test-Check "(git) worktree branch -> its own dir" ($wtLast -eq ("file://" + ((Resolve-Path $WtPath).Path -replace '\\', '/')))
+    # A file:// link can only open a file manager; an editor's URL handler opens
+    # the worktree in the editor, and over SSH a file:// path names the wrong
+    # machine. {path} always starts with '/', so a drive letter reads /C:/x.
+    Push-Location $WtPath
+    $env:CC_STATUSLINE_DIR_URL = 'vscode://file{path}'
+    $wtRaw = Get-Content -Raw $Sample | & $PwshExe -NoProfile -File $Script
+    Remove-Item Env:CC_STATUSLINE_DIR_URL
+    Pop-Location
+    $wtLine = ($wtRaw -join "`n") -split "`n" | Select-Object -First 1
+    $wtMatches = [regex]::Matches($wtLine, "`e\]8;;([^`a]*)`a")
+    $wtLast = if ($wtMatches.Count -gt 0) { $wtMatches[$wtMatches.Count - 1].Groups[1].Value } else { '' }
+    $wtWant = (Resolve-Path $WtPath).Path -replace '\\', '/'
+    if (-not $wtWant.StartsWith('/')) { $wtWant = "/$wtWant" }
+    Test-Check "(git) worktree branch -> URL template" ($wtLast -eq "vscode://file$wtWant")
 
     Test-Check "(link) scp remote -> https tree URL" `
       ((Get-BranchLink 'git@github.com:o/r.git' 'b') -eq 'https://github.com/o/r/tree/b')

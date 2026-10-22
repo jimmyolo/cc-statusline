@@ -89,6 +89,7 @@ Full map at the top of [`cc-statusline.sh`](cc-statusline.sh).
 | `CC_STATUSLINE_MODEL_USAGE=0` | Hide the per-model weekly limit |
 | `CC_STATUSLINE_WEB_PORT=<port>` | Web UI port for an SSH remote's branch link |
 | `CC_STATUSLINE_FORGE=gitlab\|github` | Override the forge guessed from the host |
+| `CC_STATUSLINE_DIR_URL=<template>` | Worktree branch link target, `{path}` = absolute path; e.g. `vscode://file{path}`, `vscode://vscode-remote/ssh-remote+<host>{path}` |
 
 ## Test
 

@@ -187,6 +187,9 @@ wt_branch_link() {
     | grep -oP '\x1b\]8;;\K[^\x07]+' | tail -1
 }
 check "(git) worktree branch → its own dir"    '[ "$(wt_branch_link "$REPO_TMP/../wt-$$")" = "file://$(cd "$REPO_TMP/../wt-$$" && pwd)" ]'
+# A file:// link can only open a file manager; an editor's URL handler opens the
+# worktree in the editor, and over SSH a file:// path names the wrong machine.
+check "(git) worktree branch → URL template"   '[ "$(CC_STATUSLINE_DIR_URL="vscode://vscode-remote/ssh-remote+box{path}" wt_branch_link "$REPO_TMP/../wt-$$")" = "vscode://vscode-remote/ssh-remote+box$(cd "$REPO_TMP/../wt-$$" && pwd)" ]'
 # A session launched in a worktree reports the worktree as its project root, so
 # the collapse to the main checkout has to happen here or the long path is back.
 wt_path_link() {  # $1 = worktree dir, reported as both cwd and project root
