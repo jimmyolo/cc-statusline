@@ -46,10 +46,11 @@ if ($RefreshUsage) {
     # filesystem root plus the emptied setting sources keep project hooks, MCP
     # servers and skills out of the run. --setting-sources= and not a separate
     # "" argument: PowerShell drops an empty argument on its way to a .cmd shim.
-    # An API key in env outranks the claude.ai login in a headless run, and
-    # get_usage then answers with no rate limits; a 7d window means this
-    # session is on that login, so the refresh drops the key to ask it too.
-    Remove-Item Env:ANTHROPIC_API_KEY, Env:ANTHROPIC_AUTH_TOKEN -ErrorAction SilentlyContinue
+    # Interactive Claude Code asks before using ANTHROPIC_API_KEY and remembers
+    # a decline; `claude -p` uses it unasked, and get_usage then answers with
+    # no rate limits. A 7d window means this session is on the claude.ai login,
+    # so the refresh drops the key to ask that login too.
+    Remove-Item Env:ANTHROPIC_API_KEY -ErrorAction SilentlyContinue
     try {
         # A hung claude must not outlive its window: take the whole tree down.
         $null = Start-ThreadJob { Start-Sleep -Seconds 30; (Get-Process -Id $using:PID).Kill($true) }

@@ -331,13 +331,12 @@ $FakeLog = Join-Path $FakeBin 'calls'
 @"
 Add-Content -Path '$FakeLog' -Value "`$PWD `$args"
 # Like the real CLI: a headless run with an API key in env answers with no
-# rate limits, since the key outranks the claude.ai login.
-if (-not (`$env:ANTHROPIC_API_KEY -or `$env:ANTHROPIC_AUTH_TOKEN)) { Get-Content -Raw '$(Join-Path $ScriptDir 'usage-sample.json')' }
+# rate limits, since `claude -p` uses the key over the claude.ai login.
+if (-not `$env:ANTHROPIC_API_KEY) { Get-Content -Raw '$(Join-Path $ScriptDir 'usage-sample.json')' }
 "@ | Set-Content (Join-Path $FakeBin 'claude.ps1')
-$SavedEnv = @{ HOME = $env:HOME; USERPROFILE = $env:USERPROFILE; PATH = $env:PATH
-    ANTHROPIC_API_KEY = $env:ANTHROPIC_API_KEY; ANTHROPIC_AUTH_TOKEN = $env:ANTHROPIC_AUTH_TOKEN }
+$SavedEnv = @{ HOME = $env:HOME; USERPROFILE = $env:USERPROFILE; PATH = $env:PATH; ANTHROPIC_API_KEY = $env:ANTHROPIC_API_KEY }
 $env:HOME = $UsageHome; $env:USERPROFILE = $UsageHome
-$env:ANTHROPIC_API_KEY = 'sk-test'; $env:ANTHROPIC_AUTH_TOKEN = 'tok-test'
+$env:ANTHROPIC_API_KEY = 'sk-test'
 $env:PATH = $FakeBin + [IO.Path]::PathSeparator + $env:PATH
 
 function Reset-Usage { Remove-Item -Force $UsageCache, "$UsageCache.stamp", $FakeLog -ErrorAction SilentlyContinue }
@@ -402,7 +401,7 @@ try {
     Test-Check "(usage) refreshed value renders" ((Get-UsagePlain '1') -match 'fable:10% \(↺ ')
 } finally {
     $env:HOME = $SavedEnv.HOME; $env:USERPROFILE = $SavedEnv.USERPROFILE; $env:PATH = $SavedEnv.PATH
-    $env:ANTHROPIC_API_KEY = $SavedEnv.ANTHROPIC_API_KEY; $env:ANTHROPIC_AUTH_TOKEN = $SavedEnv.ANTHROPIC_AUTH_TOKEN
+    $env:ANTHROPIC_API_KEY = $SavedEnv.ANTHROPIC_API_KEY
     Remove-Item -Recurse -Force $UsageHome -ErrorAction SilentlyContinue
 }
 
