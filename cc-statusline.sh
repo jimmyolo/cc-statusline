@@ -780,6 +780,9 @@ if [ "${CC_STATUSLINE_MODEL_USAGE:-1}" != 0 ] && [ -n "$RATE_7D" ]; then
      && printf '%s\n' "$EPOCHSECONDS" 2>/dev/null > "$USAGE_CACHE.stamp"; then
     # cd / and the emptied setting sources keep project hooks, MCP servers and
     # skills out of the run. A record is written only when jq produced one.
+    # An API key in env outranks the claude.ai login in a headless run, and
+    # get_usage then answers with no rate limits; a 7d window means this
+    # session is on that login, so the refresh drops the key to ask it too.
     USAGE_CACHE=$USAGE_CACHE \
     USAGE_REQ='{"type":"control_request","request_id":"u1","request":{"subtype":"get_usage","skip_behaviors":true}}' \
     USAGE_FILTER='
@@ -791,6 +794,7 @@ if [ "${CC_STATUSLINE_MODEL_USAGE:-1}" != 0 ] && [ -n "$RATE_7D" ]; then
       | select(.[2] | type == "string") | @tsv' \
     setsid bash -c '
       umask 077; cd / || exit
+      unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN
       rec=$(printf "%s\n" "$USAGE_REQ" | timeout 30 claude -p \
         --input-format stream-json --output-format stream-json --verbose \
         --model haiku --setting-sources "" --strict-mcp-config \

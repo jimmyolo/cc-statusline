@@ -519,12 +519,15 @@ FAKE_LOG="$FAKE_BIN/calls"
 cat > "$FAKE_BIN/claude" <<FAKE
 #!/bin/bash
 echo "\$PWD \$*" >> "$FAKE_LOG"
-cat "$SCRIPT_DIR/usage-sample.json"
+# Like the real CLI: a headless run with an API key in env answers with no
+# rate limits, since the key outranks the claude.ai login.
+[ -z "\${ANTHROPIC_API_KEY-}\${ANTHROPIC_AUTH_TOKEN-}" ] && cat "$SCRIPT_DIR/usage-sample.json"
 FAKE
 chmod +x "$FAKE_BIN/claude"
 usage_reset() { rm -f "$USAGE_CACHE" "$USAGE_CACHE.stamp" "$FAKE_LOG"; }
 usage_l2() {  # $1 = CC_STATUSLINE_MODEL_USAGE value; echoes plain L2
-  PATH="$FAKE_BIN:$PATH" CC_STATUSLINE_MODEL_USAGE=$1 bash "$SCRIPT" < "$SAMPLE" 2>/dev/null \
+  ANTHROPIC_API_KEY=sk-test ANTHROPIC_AUTH_TOKEN=tok-test \
+    PATH="$FAKE_BIN:$PATH" CC_STATUSLINE_MODEL_USAGE=$1 bash "$SCRIPT" < "$SAMPLE" 2>/dev/null \
     | sed -n 2p | sed -E 's/\x1b\[[0-9;]*[a-zA-Z]//g'
 }
 usage_seed() {  # $1 = fetched-at offset, $2 = reset offset, $3 = label
