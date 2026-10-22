@@ -16,7 +16,7 @@ SAMPLE="$SCRIPT_DIR/sample.json"
 # — a suite run inside a session inherits them without any shell doing it.
 unset CLAUDE_AUTOCOMPACT_PCT_OVERRIDE
 unset CLAUDE_CODE_AUTO_COMPACT_WINDOW
-unset CC_STATUSLINE_FORGE CC_STATUSLINE_WEB_PORT
+unset CC_STATUSLINE_FORGE CC_STATUSLINE_WEB_PORT CC_STATUSLINE_DIR_URL
 # Left on, a render spawns the real `claude`; the usage pass sets it per case.
 export CC_STATUSLINE_MODEL_USAGE=0
 
@@ -146,7 +146,7 @@ REPO_TMP=$(mktemp -d -t cc-statusline-smoke.XXXXXX)
 # The worktree comes first: rm -rf takes its operands left to right, so removing
 # $REPO_TMP first would leave the "$REPO_TMP/.." component non-existent and the
 # worktree behind on every run.
-trap 'rm -f "$TRANSCRIPT_TMP"; rm -rf "$REPO_TMP/../wt-$$" "$REPO_TMP" "$HOME_TMP"' EXIT
+trap 'rm -f "$TRANSCRIPT_TMP"; rm -rf "$REPO_TMP/../wt-$$" "$REPO_TMP/../wt x-$$" "$REPO_TMP" "$HOME_TMP"' EXIT
 (
   cd "$REPO_TMP"
   git init -q -b main
@@ -176,7 +176,7 @@ glyph() {  # $1 = directory to render from; echoes the glyph before the branch
     | head -1 | grep -oP '\S(?= \S+:[0-9a-f]+)'
 }
 git -C "$REPO_TMP" checkout -q main
-git -C "$REPO_TMP" worktree add -q "$REPO_TMP/../wt-$$" -b wt-branch >/dev/null 2>&1
+git -C "$REPO_TMP" worktree add -q "$REPO_TMP/../wt-$$" -b wt-branch >/dev/null 2>&1 && git -C "$REPO_TMP" worktree add -q "$REPO_TMP/../wt x-$$" -b "wt-space" >/dev/null 2>&1
 GLYPH_BRANCH=$'\ue0a0'
 check "(git) main checkout → branch glyph"     '[ "$(glyph "$REPO_TMP")" = "$GLYPH_BRANCH" ]'
 check "(git) linked worktree → tau glyph"      '[ "$(glyph "$REPO_TMP/../wt-$$")" = "τ" ]'
@@ -187,6 +187,9 @@ wt_branch_link() {
     | grep -oP '\x1b\]8;;\K[^\x07]+' | tail -1
 }
 check "(git) worktree branch → its own dir"    '[ "$(wt_branch_link "$REPO_TMP/../wt-$$")" = "file://$(cd "$REPO_TMP/../wt-$$" && pwd)" ]'
+# A file:// link can only open a file manager; an editor's URL handler opens the
+# worktree in the editor, and over SSH a file:// path names the wrong machine.
+check "(git) worktree branch → URL template"   '[ "$(CC_STATUSLINE_DIR_URL="vscode://vscode-remote/ssh-remote+box{path}" wt_branch_link "$REPO_TMP/../wt x-$$")" = "vscode://vscode-remote/ssh-remote+box$(cd "$REPO_TMP/../wt x-$$" && pwd | sed "s/ /%20/g")" ]'
 # A session launched in a worktree reports the worktree as its project root, so
 # the collapse to the main checkout has to happen here or the long path is back.
 wt_path_link() {  # $1 = worktree dir, reported as both cwd and project root

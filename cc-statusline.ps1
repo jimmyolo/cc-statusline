@@ -622,7 +622,16 @@ if ($Remote) {
 # instead of the forge: the displayed path is the main checkout's, so this is the
 # only place left to reach the checkout actually being worked in.
 if ($IsWorktree -and $Toplevel) {
-    $BranchLink = "$Esc]8;;file://$(Format-UrlPath $Toplevel)$Bel$Branch$Esc]8;;$Bel"
+    $WtUrl = "file://$(Format-UrlPath $Toplevel)"
+    # A file:// target only reaches a file manager on the same machine.
+    # CC_STATUSLINE_DIR_URL hands the click to an editor's URL handler instead,
+    # e.g. vscode://file{path}; {path} starts with '/', so a drive reads /C:/x.
+    if ($env:CC_STATUSLINE_DIR_URL) {
+        $WtEnc = Format-UrlPath ($Toplevel -replace '\\', '/')
+        if (-not $WtEnc.StartsWith('/')) { $WtEnc = "/$WtEnc" }
+        $WtUrl = $env:CC_STATUSLINE_DIR_URL.Replace('{path}', $WtEnc)
+    }
+    $BranchLink = "$Esc]8;;$WtUrl$Bel$Branch$Esc]8;;$Bel"
 }
 
 # Project root, PS1-style: the whole path, $HOME collapsed to ~ for display
