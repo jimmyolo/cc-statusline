@@ -54,11 +54,11 @@ Pick the template by where the editor runs:
 
 | Editor runs | `CC_STATUSLINE_DIR_URL` |
 |---|---|
-| On the machine Claude Code runs on | `vscode://file{path}` |
-| On your own machine, connected over VS Code Remote-SSH | `vscode://vscode-remote/ssh-remote+<host>{path}` |
+| On the machine Claude Code runs on | `vscode://file{path}?windowId=_blank` |
+| On your own machine, connected over VS Code Remote-SSH | `vscode://vscode-remote/ssh-remote+<host>{path}?windowId=_blank` |
 | Cursor | either of the above with `cursor://` |
 
-`{path}` is the worktree's absolute path, URL-encoded, always starting with `/`.
+`{path}` is the worktree's absolute path, URL-encoded, always starting with `/`. `?windowId=_blank` opens a new VS Code window; without it the click replaces the folder in the current one.
 
 Remote-SSH, plugin:
 
@@ -75,7 +75,7 @@ Remote-SSH, plugin:
 Manual: add the template to the `env` of either file:
 
 ```json
-"env": { "CC_STATUSLINE_DIR_URL": "vscode://vscode-remote/ssh-remote+<host>{path}" }
+"env": { "CC_STATUSLINE_DIR_URL": "vscode://vscode-remote/ssh-remote+<host>{path}?windowId=_blank" }
 ```
 
 The next render picks it up. If VS Code opens but says the path does not exist on this computer, the link opened a local window: use the Remote-SSH template, and check the host.

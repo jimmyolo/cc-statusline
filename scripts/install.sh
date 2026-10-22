@@ -151,7 +151,7 @@ if [ "$MODE" = editor ]; then
         echo "install.sh: '$HOST' is not a valid SSH host; left untouched" >&2
         exit 2
       fi
-      URL="vscode://vscode-remote/ssh-remote+$HOST{path}"
+      URL="vscode://vscode-remote/ssh-remote+$HOST{path}?windowId=_blank"
       mkdir -p "$(dirname "$TARGET")"
       write_settings '(.[0] // {}) | .env = ((.env // {}) + {CC_STATUSLINE_DIR_URL: $url})' --arg url "$URL" \
         || { echo "install.sh: could not rewrite $SETTINGS; left untouched: $WRITE_ERR" >&2; exit 1; }

@@ -19,7 +19,7 @@ a click on the user's own machine opens the worktree in VS Code, the way
 `code <path>` would.
 
 It writes `env.CC_STATUSLINE_DIR_URL =
-vscode://vscode-remote/ssh-remote+<host>{path}`. `<host>` is the name the
+vscode://vscode-remote/ssh-remote+<host>{path}?windowId=_blank`. `<host>` is the name the
 user's **local** VS Code connects to this machine with: the `Host` entry in the
 local `~/.ssh/config`, or the IP or `user@host` they typed into Remote-SSH.
 

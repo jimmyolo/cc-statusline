@@ -448,22 +448,22 @@ C="$TMP/ed-vscode"; mkdir -p "$C/config"
 echo '{"model": "opus", "env": {"FOO": "1"}}' >"$C/config/settings.json"
 run "$C" editor user vscode 192.168.198.121; check "exit 0" "$?" 0
 check "env value" "$(jq -r .env.CC_STATUSLINE_DIR_URL "$C/config/settings.json")" \
-  'vscode://vscode-remote/ssh-remote+192.168.198.121{path}'
+  'vscode://vscode-remote/ssh-remote+192.168.198.121{path}?windowId=_blank'
 check "other env key kept" "$(jq -r .env.FOO "$C/config/settings.json")" 1
 check "unrelated top-level key kept" "$(jq -r .model "$C/config/settings.json")" opus
 check "statusLine not touched" "$(jq 'has("statusLine")' "$C/config/settings.json")" false
 check "no data dir created" "$([ -e "$C/data" ] && echo exists || echo absent)" absent
 check "no temp file left beside settings.json" "$(ls -A "$C/config")" settings.json
-check "says what it wrote" "$(grep -c -F 'CC_STATUSLINE_DIR_URL = vscode://vscode-remote/ssh-remote+192.168.198.121{path}' "$C/out")" 1
+check "says what it wrote" "$(grep -c -F 'CC_STATUSLINE_DIR_URL = vscode://vscode-remote/ssh-remote+192.168.198.121{path}?windowId=_blank' "$C/out")" 1
 run "$C" editor user vscode jimmy@dev-1.example; check "user@host accepted" "$?" 0
 check "re-run replaces the value" "$(jq -r .env.CC_STATUSLINE_DIR_URL "$C/config/settings.json")" \
-  'vscode://vscode-remote/ssh-remote+jimmy@dev-1.example{path}'
+  'vscode://vscode-remote/ssh-remote+jimmy@dev-1.example{path}?windowId=_blank'
 
 echo "editor vscode: no settings.json yet"
 C="$TMP/ed-fresh"; mkdir -p "$C/config"
 run "$C" editor user vscode myhost; check "exit 0" "$?" 0
 check "settings.json holds only the env" "$(jq -c . "$C/config/settings.json")" \
-  '{"env":{"CC_STATUSLINE_DIR_URL":"vscode://vscode-remote/ssh-remote+myhost{path}"}}'
+  '{"env":{"CC_STATUSLINE_DIR_URL":"vscode://vscode-remote/ssh-remote+myhost{path}?windowId=_blank"}}'
 
 # The host is spliced into a URL a terminal opens on click, and arrives from a
 # slash-command argument: anything outside an SSH host alias is refused.
@@ -525,7 +525,7 @@ G -C "$C/repo" init -q && G -C "$C/repo" commit -q --allow-empty -m init
 G -C "$C/repo" worktree add -q "$C/wt" -b wt >/dev/null 2>&1
 ( cd "$C/wt" && run "$C" editor project vscode h ); check "exit 0" "$?" 0
 check "env in the main checkout's local file" \
-  "$(jq -r .env.CC_STATUSLINE_DIR_URL "$C/repo/.claude/settings.local.json")" 'vscode://vscode-remote/ssh-remote+h{path}'
+  "$(jq -r .env.CC_STATUSLINE_DIR_URL "$C/repo/.claude/settings.local.json")" 'vscode://vscode-remote/ssh-remote+h{path}?windowId=_blank'
 check "nothing written in the worktree" "$([ -e "$C/wt/.claude" ] && echo exists || echo absent)" absent
 check "user settings not created" "$(ls -A "$C/config")" ""
 check "warns the file is not ignored by git" "$(grep -c -F "is not ignored by git" "$C/out")" 1
@@ -539,7 +539,7 @@ echo "editor project: outside a git repository, the current directory"
 C="$TMP/ed-plain"; mkdir -p "$C/config" "$C/dir"
 ( cd "$C/dir" && run "$C" editor project vscode h ); check "exit 0" "$?" 0
 check "env in the cwd's local file" \
-  "$(jq -r .env.CC_STATUSLINE_DIR_URL "$C/dir/.claude/settings.local.json")" 'vscode://vscode-remote/ssh-remote+h{path}'
+  "$(jq -r .env.CC_STATUSLINE_DIR_URL "$C/dir/.claude/settings.local.json")" 'vscode://vscode-remote/ssh-remote+h{path}?windowId=_blank'
 
 # A repository rooted at $HOME (a dotfiles repo) does not move the local file:
 # Claude Code keeps it in the working directory then.
@@ -548,7 +548,7 @@ C="$TMP/ed-homerepo"; mkdir -p "$C/config" "$C/home/projects/foo"
 G -C "$C/home" init -q
 ( cd "$C/home/projects/foo" && HOME="$C/home" run "$C" editor project vscode h ); check "exit 0" "$?" 0
 check "env in the cwd's local file" \
-  "$(jq -r .env.CC_STATUSLINE_DIR_URL "$C/home/projects/foo/.claude/settings.local.json")" 'vscode://vscode-remote/ssh-remote+h{path}'
+  "$(jq -r .env.CC_STATUSLINE_DIR_URL "$C/home/projects/foo/.claude/settings.local.json")" 'vscode://vscode-remote/ssh-remote+h{path}?windowId=_blank'
 check "nothing written at the home root" "$([ -e "$C/home/.claude" ] && echo exists || echo absent)" absent
 
 echo "editor project: a worktree of a bare repository, the current directory"
@@ -556,7 +556,7 @@ C="$TMP/ed-bare"; mkdir -p "$C/config"
 G init -q --bare "$C/b.git" && G -C "$C/b.git" worktree add -q --orphan "$C/bw" >/dev/null 2>&1
 ( cd "$C/bw" && run "$C" editor project vscode h ); check "exit 0" "$?" 0
 check "env in the worktree's local file" \
-  "$(jq -r .env.CC_STATUSLINE_DIR_URL "$C/bw/.claude/settings.local.json")" 'vscode://vscode-remote/ssh-remote+h{path}'
+  "$(jq -r .env.CC_STATUSLINE_DIR_URL "$C/bw/.claude/settings.local.json")" 'vscode://vscode-remote/ssh-remote+h{path}?windowId=_blank'
 check "nothing written in git storage" "$([ -e "$C/b.git/.claude" ] && echo exists || echo absent)" absent
 
 echo "editor project: a symlinked local file gets no git error"
