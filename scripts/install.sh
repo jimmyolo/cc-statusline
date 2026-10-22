@@ -1,7 +1,7 @@
 #!/bin/bash
 # Installs cc-statusline as the Claude Code status line. Run by /cc-statusline:setup.
 #
-# Usage: install.sh <data-dir> [auto|bash|pwsh|remove]
+# Usage: install.sh <data-dir> [auto|bash|pwsh|remove | editor <user|project> <vscode <host>|remove>]
 #
 # A plugin cannot set statusLine itself, and its own directory is versioned per
 # commit, so the script is copied into <data-dir> (the plugin's data directory,
@@ -29,8 +29,9 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SETTINGS="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json"
 
 # Project scope is the file Claude Code reads as project-local settings: at the
-# main checkout's root inside a git repository, from any of its worktrees, and
-# in the current directory outside one or on Windows.
+# main checkout's root inside a git repository, from any of its worktrees. It
+# stays in the current directory outside one, on Windows, and when that root is
+# $HOME, not owned by the user, or a bare repository with no checkout of its own.
 if [ "$MODE" = editor ]; then
   SCOPE="${3:-}" ACTION="${4:-}" HOST="${5:-}"
   case "$SCOPE" in
@@ -39,8 +40,12 @@ if [ "$MODE" = editor ]; then
       PROJECT="$(pwd)"
       case "$(uname -s 2>/dev/null)" in
         MINGW*|MSYS*|CYGWIN*) ;;
-        *) MAIN="$(git worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p')" || MAIN=""
-           [ -z "$MAIN" ] || PROJECT="$MAIN" ;;
+        *) WT_LIST="$(git worktree list --porcelain 2>/dev/null)" || WT_LIST=""
+           MAIN="$(printf '%s\n' "$WT_LIST" | sed -n '1s/^worktree //p')"
+           if [ -n "$MAIN" ] && [ "$(printf '%s\n' "$WT_LIST" | sed -n 2p)" != bare ] && [ -O "$MAIN" ] \
+              && [ "$(cd -P "$MAIN" && pwd)" != "$(cd -P "$HOME" 2>/dev/null && pwd)" ]; then
+             PROJECT="$MAIN"
+           fi ;;
       esac
       SETTINGS="$PROJECT/.claude/settings.local.json" ;;
     *) echo "install.sh: unknown scope '$SCOPE' (expected user or project)" >&2; exit 2 ;;
@@ -153,10 +158,11 @@ if [ "$MODE" = editor ]; then
       echo "CC_STATUSLINE_DIR_URL = $URL"
       echo "written to $SETTINGS"
       # A hand-made local file is not covered by the excludes Claude Code adds
-      # when it creates one, and this one names a host.
-      if [ "$SCOPE" = project ] && git -C "$PROJECT" rev-parse --git-dir >/dev/null 2>&1 \
-         && ! git -C "$PROJECT" check-ignore -q "$TARGET"; then
-        echo "warning: $SETTINGS is not ignored by git; add .claude/settings.local.json to .gitignore"
+      # when it creates one, and this one names a host. Exit 1 is "not ignored";
+      # anything else (no work tree, a path outside it) says nothing either way.
+      if [ "$SCOPE" = project ] && git -C "$PROJECT" rev-parse --git-dir >/dev/null 2>&1; then
+        RC=0; git -C "$PROJECT" check-ignore -q "$SETTINGS" 2>/dev/null || RC=$?
+        [ "$RC" -ne 1 ] || echo "warning: $SETTINGS is not ignored by git; add .claude/settings.local.json to .gitignore"
       fi ;;
     remove)
       if ! jq -s -e '.[0].env.CC_STATUSLINE_DIR_URL != null' "$SRC" >/dev/null; then

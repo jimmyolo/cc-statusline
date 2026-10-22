@@ -31,8 +31,10 @@ local `~/.ssh/config`, or the IP or `user@host` they typed into Remote-SSH.
 Anything else: run nothing, and tell the user the accepted forms.
 
 `<host>` must match `^[A-Za-z0-9][A-Za-z0-9._@-]*$`. If it does not, run
-nothing and say why. If `vscode` comes without a host, run nothing. Tell the
-user to look the host up on the machine VS Code runs on. On Windows that is:
+nothing and say why. An IPv6 literal or a `host:port` does not match: the user
+needs an alias for it in their local `~/.ssh/config`. If `vscode` comes
+without a host, run nothing. Tell the user to look the host up on the machine
+VS Code runs on. On Windows that is:
 
 ```powershell
 Select-String -Path "$HOME\.ssh\config" -Pattern '^\s*(Host|HostName)\s' | ForEach-Object { $_.Line.Trim() }
@@ -50,7 +52,9 @@ anything. Offer exactly these two options:
   on this machine. This is where `/cc-statusline:setup` writes `statusLine`.
 - **Project**: `.claude/settings.local.json` at this repository's main checkout
   root. Applies to this repository and all of its worktrees only, and stays out
-  of the shared `.claude/settings.json`.
+  of the shared `.claude/settings.json`. Outside git, on Windows, and for a
+  repository rooted at `$HOME` or bare, the file goes in the working directory
+  instead, as Claude Code reads it there.
 
 ## Run
 
@@ -73,8 +77,9 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/install.sh" "${CLAUDE_PLUGIN_DATA}" editor <
 The installer checks the host again, changes only `env.CC_STATUSLINE_DIR_URL`
 (dropping an `env` left empty on remove), and refuses a settings file that is
 not a single JSON object or whose `env` is not an object. For project scope it
-resolves the main checkout root itself, so the command runs from the session's
-working directory as it is.
+resolves the main checkout root itself, but where it falls back to the working
+directory it uses the Bash tool's. If an earlier `cd` moved that away from the
+session's primary working directory, first `cd` back to it in a separate call.
 
 ## Report
 

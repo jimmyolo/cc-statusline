@@ -254,8 +254,13 @@ try {
     Test-Check "(git) worktree branch -> its own dir" ($wtLast -eq ("file://" + ((Resolve-Path $WtPath).Path -replace '\\', '/')))
     # A file:// link can only open a file manager; an editor's URL handler opens
     # the worktree in the editor, and over SSH a file:// path names the wrong
-    # machine. {path} always starts with '/', so a drive letter reads /C:/x.
-    Push-Location $WtPath
+    # machine. {path} always starts with '/', so a drive letter reads /C:/x, and
+    # is encoded, which the space in this worktree's path checks.
+    $WtSpace = "$RepoTmp-w t"
+    Push-Location $RepoTmp
+    git worktree add -q $WtSpace -b wt-space 2>&1 | Out-Null
+    Pop-Location
+    Push-Location $WtSpace
     $env:CC_STATUSLINE_DIR_URL = 'vscode://file{path}'
     $wtRaw = Get-Content -Raw $Sample | & $PwshExe -NoProfile -File $Script
     Remove-Item Env:CC_STATUSLINE_DIR_URL
@@ -263,7 +268,7 @@ try {
     $wtLine = ($wtRaw -join "`n") -split "`n" | Select-Object -First 1
     $wtMatches = [regex]::Matches($wtLine, "`e\]8;;([^`a]*)`a")
     $wtLast = if ($wtMatches.Count -gt 0) { $wtMatches[$wtMatches.Count - 1].Groups[1].Value } else { '' }
-    $wtWant = (Resolve-Path $WtPath).Path -replace '\\', '/'
+    $wtWant = (Resolve-Path $WtSpace).Path -replace '\\', '/' -replace ' ', '%20'
     if (-not $wtWant.StartsWith('/')) { $wtWant = "/$wtWant" }
     Test-Check "(git) worktree branch -> URL template" ($wtLast -eq "vscode://file$wtWant")
 
@@ -328,6 +333,7 @@ try {
 } finally {
     Remove-Item -Recurse -Force $RepoTmp -ErrorAction SilentlyContinue
     if ($WtPath) { Remove-Item -Recurse -Force $WtPath -ErrorAction SilentlyContinue }
+    if ($WtSpace) { Remove-Item -Recurse -Force $WtSpace -ErrorAction SilentlyContinue }
 }
 
 # ── Per-model weekly usage ────────────────────────────────────

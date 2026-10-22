@@ -68,8 +68,8 @@ Remote-SSH, plugin:
 
 - `<host>` is the name your local VS Code connects with: the `Host` entry in your local `~/.ssh/config`, or the IP or `user@host` you connect to. On Windows, list them with `Select-String -Path "$HOME\.ssh\config" -Pattern '^\s*(Host|HostName)\s'`
 - It asks for the scope, or takes it as a third argument:
-  - `user` writes `~/.claude/settings.json`, for every project on this machine
-  - `project` writes `.claude/settings.local.json` at the repository's main checkout root, for that repository and its worktrees. It warns when git does not ignore the file
+  - `user` writes `~/.claude/settings.json` (or `$CLAUDE_CONFIG_DIR/settings.json`), for every project on this machine
+  - `project` writes `.claude/settings.local.json` at the repository's main checkout root, for that repository and its worktrees. It stays in the current directory outside git, on Windows, and for a repository rooted at `$HOME` or bare, where Claude Code reads it from there. It warns when git does not ignore the file
 - `/cc-statusline:setup-remote-editor remove [user|project]` deletes it
 
 Manual: add the template to the `env` of either file:

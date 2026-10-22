@@ -518,6 +518,7 @@ echo "editor project: written to the main checkout's settings.local.json"
 C="$TMP/ed-proj"; mkdir -p "$C/config" "$C/repo"
 # The host's global excludes may already ignore the file; the warning is about
 # this repository, so git reads no global config here.
+SAVED_GIT_ENV="$(declare -p GIT_CONFIG_GLOBAL XDG_CONFIG_HOME 2>/dev/null || true)"
 export GIT_CONFIG_GLOBAL=/dev/null XDG_CONFIG_HOME="$C/xdg"
 G() { command git -c user.name=t -c user.email=t@t "$@"; }
 G -C "$C/repo" init -q && G -C "$C/repo" commit -q --allow-empty -m init
@@ -539,6 +540,34 @@ C="$TMP/ed-plain"; mkdir -p "$C/config" "$C/dir"
 ( cd "$C/dir" && run "$C" editor project vscode h ); check "exit 0" "$?" 0
 check "env in the cwd's local file" \
   "$(jq -r .env.CC_STATUSLINE_DIR_URL "$C/dir/.claude/settings.local.json")" 'vscode://vscode-remote/ssh-remote+h{path}'
+
+# A repository rooted at $HOME (a dotfiles repo) does not move the local file:
+# Claude Code keeps it in the working directory then.
+echo "editor project: a repository rooted at \$HOME, the current directory"
+C="$TMP/ed-homerepo"; mkdir -p "$C/config" "$C/home/projects/foo"
+G -C "$C/home" init -q
+( cd "$C/home/projects/foo" && HOME="$C/home" run "$C" editor project vscode h ); check "exit 0" "$?" 0
+check "env in the cwd's local file" \
+  "$(jq -r .env.CC_STATUSLINE_DIR_URL "$C/home/projects/foo/.claude/settings.local.json")" 'vscode://vscode-remote/ssh-remote+h{path}'
+check "nothing written at the home root" "$([ -e "$C/home/.claude" ] && echo exists || echo absent)" absent
+
+echo "editor project: a worktree of a bare repository, the current directory"
+C="$TMP/ed-bare"; mkdir -p "$C/config"
+G init -q --bare "$C/b.git" && G -C "$C/b.git" worktree add -q --orphan "$C/bw" >/dev/null 2>&1
+( cd "$C/bw" && run "$C" editor project vscode h ); check "exit 0" "$?" 0
+check "env in the worktree's local file" \
+  "$(jq -r .env.CC_STATUSLINE_DIR_URL "$C/bw/.claude/settings.local.json")" 'vscode://vscode-remote/ssh-remote+h{path}'
+check "nothing written in git storage" "$([ -e "$C/b.git/.claude" ] && echo exists || echo absent)" absent
+
+echo "editor project: a symlinked local file gets no git error"
+C="$TMP/ed-proj-link"; mkdir -p "$C/config" "$C/repo/.claude"
+G -C "$C/repo" init -q
+echo '{}' >"$C/outside.json"
+ln -s "$C/outside.json" "$C/repo/.claude/settings.local.json"
+( cd "$C/repo" && run "$C" editor project vscode h ); check "exit 0" "$?" 0
+check "still a symlink" "$([ -L "$C/repo/.claude/settings.local.json" ] && echo link)" link
+check "no git error in the output" "$(grep -c -F "fatal" "$C/out")" 0
+unset GIT_CONFIG_GLOBAL XDG_CONFIG_HOME; eval "$SAVED_GIT_ENV"
 
 C="$TMP/nodata"; mkdir -p "$C/config"
 CLAUDE_CONFIG_DIR="$C/config" bash "$INSTALL" >"$C/out" 2>&1

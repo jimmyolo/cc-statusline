@@ -535,9 +535,13 @@ if [ "$IS_WORKTREE" -eq 1 ] && [ -n "$_toplevel" ]; then
   # A file:// target only reaches a file manager on the same machine.
   # CC_STATUSLINE_DIR_URL hands the click to an editor's URL handler instead,
   # e.g. vscode://file{path} or vscode://vscode-remote/ssh-remote+<host>{path}.
-  _wt_url=${CC_STATUSLINE_DIR_URL:-'file://{path}'}
+  # {path} starts with "/" even for Git for Windows' C:/... toplevel.
   _wt_enc=$(urlenc_path "$_toplevel")
-  _wt_url=${_wt_url//'{path}'/"$_wt_enc"}
+  _wt_url="file://$_wt_enc"
+  if [ -n "${CC_STATUSLINE_DIR_URL:-}" ]; then
+    case $_wt_enc in /*) ;; *) _wt_enc=/$_wt_enc ;; esac
+    _wt_url=${CC_STATUSLINE_DIR_URL//'{path}'/"$_wt_enc"}
+  fi
   BRANCH_LINK=$(printf '%b' "\e]8;;${_wt_url}\a${BRANCH}\e]8;;\a")
 elif [ -n "$REMOTE" ] && [ "$ON_BRANCH" -eq 1 ] &&
      git show-ref --verify --quiet "refs/remotes/origin/$BRANCH" 2>/dev/null; then
