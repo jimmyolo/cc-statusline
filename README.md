@@ -46,6 +46,40 @@ ln -s ~/projects/cc-statusline/cc-statusline.sh ~/.claude/cc-statusline.sh
 #   "statusLine": { "type": "command", "command": "bash ~/.claude/cc-statusline.sh" }
 ```
 
+### Open a worktree in an editor
+
+In a linked worktree the branch name links to the worktree directory. By default the link is `file://`, which only a file manager on the same machine opens. `CC_STATUSLINE_DIR_URL` hands the click to an editor's URL handler instead. A terminal never runs a command from a link, so `code <path>` itself is not an option.
+
+Pick the template by where the editor runs:
+
+| Editor runs | `CC_STATUSLINE_DIR_URL` |
+|---|---|
+| On the machine Claude Code runs on | `vscode://file{path}` |
+| On your own machine, connected over VS Code Remote-SSH | `vscode://vscode-remote/ssh-remote+<host>{path}` |
+| Cursor | either of the above with `cursor://` |
+
+`{path}` is the worktree's absolute path, URL-encoded, always starting with `/`.
+
+Remote-SSH, plugin:
+
+```
+/cc-statusline:setup-remote-editor vscode <host>
+```
+
+- `<host>` is the name your local VS Code connects with: the `Host` entry in your local `~/.ssh/config`, or the IP or `user@host` you connect to. On Windows, list them with `Select-String -Path "$HOME\.ssh\config" -Pattern '^\s*(Host|HostName)\s'`
+- It asks for the scope, or takes it as a third argument:
+  - `user` writes `~/.claude/settings.json`, for every project on this machine
+  - `project` writes `.claude/settings.local.json` at the repository's main checkout root, for that repository and its worktrees. It warns when git does not ignore the file
+- `/cc-statusline:setup-remote-editor remove [user|project]` deletes it
+
+Manual: add the template to the `env` of either file:
+
+```json
+"env": { "CC_STATUSLINE_DIR_URL": "vscode://vscode-remote/ssh-remote+<host>{path}" }
+```
+
+The next render picks it up. If VS Code opens but says the path does not exist on this computer, the link opened a local window: use the Remote-SSH template, and check the host.
+
 ## Reference
 
 ### Layout
@@ -89,7 +123,7 @@ Full map at the top of [`cc-statusline.sh`](cc-statusline.sh).
 | `CC_STATUSLINE_MODEL_USAGE=0` | Hide the per-model weekly limit |
 | `CC_STATUSLINE_WEB_PORT=<port>` | Web UI port for an SSH remote's branch link |
 | `CC_STATUSLINE_FORGE=gitlab\|github` | Override the forge guessed from the host |
-| `CC_STATUSLINE_DIR_URL=<template>` | Worktree branch link target, `{path}` = absolute path; e.g. `vscode://file{path}`, `vscode://vscode-remote/ssh-remote+<host>{path}` |
+| `CC_STATUSLINE_DIR_URL=<template>` | Worktree branch link target; see [Open a worktree in an editor](#open-a-worktree-in-an-editor) |
 
 ## Test
 

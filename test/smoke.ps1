@@ -23,6 +23,7 @@ Remove-Item Env:\CLAUDE_AUTOCOMPACT_PCT_OVERRIDE -ErrorAction SilentlyContinue
 Remove-Item Env:\CLAUDE_CODE_AUTO_COMPACT_WINDOW -ErrorAction SilentlyContinue
 Remove-Item Env:\CC_STATUSLINE_FORGE -ErrorAction SilentlyContinue
 Remove-Item Env:\CC_STATUSLINE_WEB_PORT -ErrorAction SilentlyContinue
+Remove-Item Env:\CC_STATUSLINE_DIR_URL -ErrorAction SilentlyContinue
 # Left on, a render spawns the real `claude`; the usage pass sets it per case.
 $env:CC_STATUSLINE_MODEL_USAGE = '0'
 

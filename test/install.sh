@@ -443,6 +443,103 @@ CLAUDE_CONFIG_DIR="$C/config" bash "$INSTALL" "$D" remove >"$C/out" 2>&1; check 
 check "statusLine gone" "$(jq -c . "$C/config/settings.json")" '{"model":"opus"}'
 check "nothing in the path was executed" "$([ -e "$C/pwned" ] && echo ran || echo absent)" absent
 
+echo "editor vscode: points the worktree link at VS Code Remote-SSH"
+C="$TMP/ed-vscode"; mkdir -p "$C/config"
+echo '{"model": "opus", "env": {"FOO": "1"}}' >"$C/config/settings.json"
+run "$C" editor user vscode 192.168.198.121; check "exit 0" "$?" 0
+check "env value" "$(jq -r .env.CC_STATUSLINE_DIR_URL "$C/config/settings.json")" \
+  'vscode://vscode-remote/ssh-remote+192.168.198.121{path}'
+check "other env key kept" "$(jq -r .env.FOO "$C/config/settings.json")" 1
+check "unrelated top-level key kept" "$(jq -r .model "$C/config/settings.json")" opus
+check "statusLine not touched" "$(jq 'has("statusLine")' "$C/config/settings.json")" false
+check "no data dir created" "$([ -e "$C/data" ] && echo exists || echo absent)" absent
+check "no temp file left beside settings.json" "$(ls -A "$C/config")" settings.json
+check "says what it wrote" "$(grep -c -F 'CC_STATUSLINE_DIR_URL = vscode://vscode-remote/ssh-remote+192.168.198.121{path}' "$C/out")" 1
+run "$C" editor user vscode jimmy@dev-1.example; check "user@host accepted" "$?" 0
+check "re-run replaces the value" "$(jq -r .env.CC_STATUSLINE_DIR_URL "$C/config/settings.json")" \
+  'vscode://vscode-remote/ssh-remote+jimmy@dev-1.example{path}'
+
+echo "editor vscode: no settings.json yet"
+C="$TMP/ed-fresh"; mkdir -p "$C/config"
+run "$C" editor user vscode myhost; check "exit 0" "$?" 0
+check "settings.json holds only the env" "$(jq -c . "$C/config/settings.json")" \
+  '{"env":{"CC_STATUSLINE_DIR_URL":"vscode://vscode-remote/ssh-remote+myhost{path}"}}'
+
+# The host is spliced into a URL a terminal opens on click, and arrives from a
+# slash-command argument: anything outside an SSH host alias is refused.
+for H in "" "a b" "x'y" 'h$(touch pwned)' "-oProxyCommand=x" "h/../p" "h#x"; do
+  echo "editor vscode: refuses host [$H]"
+  C="$TMP/ed-bad-$RANDOM"; mkdir -p "$C/config"
+  printf '%s' '{"model": "opus"}' >"$C/config/settings.json"
+  ( cd "$C" && run "$C" editor user vscode "$H" ); refused "$C" "$?" "not a valid SSH host" '{"model": "opus"}'
+  check "nothing in the host was executed" "$([ -e "$C/pwned" ] && echo ran || echo absent)" absent
+done
+
+echo "editor: unknown editor"
+C="$TMP/ed-unknown"; mkdir -p "$C/config"
+printf '%s' '{"model": "opus"}' >"$C/config/settings.json"
+run "$C" editor user emacs h; refused "$C" "$?" "unknown editor 'emacs'" '{"model": "opus"}'
+
+echo "editor vscode: settings.json whose env is not an object"
+C="$TMP/ed-badenv"; mkdir -p "$C/config"
+printf '%s' '{"env": "x"}' >"$C/config/settings.json"
+run "$C" editor user vscode h; refused "$C" "$?" "env is not an object; left untouched" '{"env": "x"}'
+
+echo "editor remove: deletes only the link template"
+C="$TMP/ed-rm"; mkdir -p "$C/config"
+echo '{"model": "opus", "env": {"FOO": "1"}}' >"$C/config/settings.json"
+run "$C" editor user vscode h; run "$C" editor user remove; check "exit 0" "$?" 0
+check "settings.json is back to what it was" "$(jq -c . "$C/config/settings.json")" '{"model":"opus","env":{"FOO":"1"}}'
+check "says what it removed" "$(grep -c -F "CC_STATUSLINE_DIR_URL removed from $C/config/settings.json" "$C/out")" 1
+
+echo "editor remove: an env left empty goes too"
+C="$TMP/ed-rm-empty"; mkdir -p "$C/config"
+echo '{"model": "opus"}' >"$C/config/settings.json"
+run "$C" editor user vscode h; run "$C" editor user remove; check "exit 0" "$?" 0
+check "settings.json is back to the other keys" "$(jq -c . "$C/config/settings.json")" '{"model":"opus"}'
+
+echo "editor remove: nothing set"
+C="$TMP/ed-rm-none"; mkdir -p "$C/config"
+S='{"model":  "opus"}'
+printf '%s' "$S" >"$C/config/settings.json"
+INODE="$(ls -i "$C/config/settings.json" | awk '{print $1}')"
+run "$C" editor user remove; check "exit 0" "$?" 0
+check "settings.json not rewritten" "$(ls -i "$C/config/settings.json" | awk '{print $1}')" "$INODE"
+check "says there is nothing to remove" "$(grep -c -F "nothing to remove" "$C/out")" 1
+
+echo "editor: unknown scope"
+C="$TMP/ed-scope"; mkdir -p "$C/config"
+printf '%s' '{"model": "opus"}' >"$C/config/settings.json"
+run "$C" editor global vscode h; refused "$C" "$?" "unknown scope 'global'" '{"model": "opus"}'
+
+# Claude Code reads a repository's local settings at the main checkout's root,
+# from every worktree of it, so that is where a project-scoped link must land.
+echo "editor project: written to the main checkout's settings.local.json"
+C="$TMP/ed-proj"; mkdir -p "$C/config" "$C/repo"
+# The host's global excludes may already ignore the file; the warning is about
+# this repository, so git reads no global config here.
+export GIT_CONFIG_GLOBAL=/dev/null XDG_CONFIG_HOME="$C/xdg"
+G() { command git -c user.name=t -c user.email=t@t "$@"; }
+G -C "$C/repo" init -q && G -C "$C/repo" commit -q --allow-empty -m init
+G -C "$C/repo" worktree add -q "$C/wt" -b wt >/dev/null 2>&1
+( cd "$C/wt" && run "$C" editor project vscode h ); check "exit 0" "$?" 0
+check "env in the main checkout's local file" \
+  "$(jq -r .env.CC_STATUSLINE_DIR_URL "$C/repo/.claude/settings.local.json")" 'vscode://vscode-remote/ssh-remote+h{path}'
+check "nothing written in the worktree" "$([ -e "$C/wt/.claude" ] && echo exists || echo absent)" absent
+check "user settings not created" "$(ls -A "$C/config")" ""
+check "warns the file is not ignored by git" "$(grep -c -F "is not ignored by git" "$C/out")" 1
+echo '.claude/settings.local.json' >"$C/repo/.gitignore"
+( cd "$C/repo" && run "$C" editor project remove ); check "remove exit 0" "$?" 0
+check "local file back to an empty object" "$(jq -c . "$C/repo/.claude/settings.local.json")" '{}'
+( cd "$C/repo" && run "$C" editor project vscode h )
+check "an ignored file draws no warning" "$(grep -c -F "is not ignored by git" "$C/out")" 0
+
+echo "editor project: outside a git repository, the current directory"
+C="$TMP/ed-plain"; mkdir -p "$C/config" "$C/dir"
+( cd "$C/dir" && run "$C" editor project vscode h ); check "exit 0" "$?" 0
+check "env in the cwd's local file" \
+  "$(jq -r .env.CC_STATUSLINE_DIR_URL "$C/dir/.claude/settings.local.json")" 'vscode://vscode-remote/ssh-remote+h{path}'
+
 C="$TMP/nodata"; mkdir -p "$C/config"
 CLAUDE_CONFIG_DIR="$C/config" bash "$INSTALL" >"$C/out" 2>&1
 check "missing data-dir argument exits non-zero" "$([ $? -ne 0 ] && echo nonzero)" nonzero

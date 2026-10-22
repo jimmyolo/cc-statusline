@@ -15,13 +15,37 @@
 #
 # "remove" undoes that: it deletes statusLine, but only while it still points at
 # this data dir's copy. The data-dir files stay; uninstalling the plugin deletes them.
+#
+# "editor <user|project> vscode <host>" sets env.CC_STATUSLINE_DIR_URL so a
+# worktree's branch link opens in VS Code over Remote-SSH, and
+# "editor <user|project> remove" deletes it. Run by /cc-statusline:setup-remote-editor.
 
 set -euo pipefail
 
-DATA_DIR="${1:?usage: install.sh <data-dir> [auto|bash|pwsh|remove]}"
+USAGE="usage: install.sh <data-dir> [auto|bash|pwsh|remove | editor <user|project> <vscode <host>|remove>]"
+DATA_DIR="${1:?$USAGE}"
 MODE="${2:-auto}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SETTINGS="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json"
+
+# Project scope is the file Claude Code reads as project-local settings: at the
+# main checkout's root inside a git repository, from any of its worktrees, and
+# in the current directory outside one or on Windows.
+if [ "$MODE" = editor ]; then
+  SCOPE="${3:-}" ACTION="${4:-}" HOST="${5:-}"
+  case "$SCOPE" in
+    user) ;;
+    project)
+      PROJECT="$(pwd)"
+      case "$(uname -s 2>/dev/null)" in
+        MINGW*|MSYS*|CYGWIN*) ;;
+        *) MAIN="$(git worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p')" || MAIN=""
+           [ -z "$MAIN" ] || PROJECT="$MAIN" ;;
+      esac
+      SETTINGS="$PROJECT/.claude/settings.local.json" ;;
+    *) echo "install.sh: unknown scope '$SCOPE' (expected user or project)" >&2; exit 2 ;;
+  esac
+fi
 
 PICKED=""
 
@@ -92,8 +116,8 @@ case "$MODE" in
   auto) pick_auto ;;
   bash) SCRIPT="cc-statusline.sh" ;;
   pwsh) SCRIPT="cc-statusline.ps1" ;;
-  remove) ;;
-  *) echo "install.sh: unknown mode '$MODE' (expected auto, bash, pwsh or remove)" >&2; exit 2 ;;
+  remove|editor) ;;
+  *) echo "install.sh: unknown mode '$MODE' (expected auto, bash, pwsh, remove or editor)" >&2; exit 2 ;;
 esac
 
 # Renamed over the target from the same directory, so a reader never sees a
@@ -108,6 +132,44 @@ write_settings() { # write_settings <jq-filter> [jq args...]
   WRITE_ERR="$(jq -s "$@" "$filter" "$SRC" 2>&1 >"$TMP")" || return 1
   mv -f "$TMP" "$TARGET"
 }
+
+if [ "$MODE" = editor ]; then
+  if ! jq -s -e '.[0].env | . == null or type == "object"' "$SRC" >/dev/null; then
+    echo "install.sh: $SETTINGS env is not an object; left untouched" >&2
+    exit 1
+  fi
+  case "$ACTION" in
+    vscode)
+      # The host arrives as a slash-command argument and lands in a URL a click
+      # opens, so only what an SSH host alias, IP or user@host is made of passes.
+      if ! [[ "$HOST" =~ ^[A-Za-z0-9][A-Za-z0-9._@-]*$ ]]; then
+        echo "install.sh: '$HOST' is not a valid SSH host; left untouched" >&2
+        exit 2
+      fi
+      URL="vscode://vscode-remote/ssh-remote+$HOST{path}"
+      mkdir -p "$(dirname "$TARGET")"
+      write_settings '(.[0] // {}) | .env = ((.env // {}) + {CC_STATUSLINE_DIR_URL: $url})' --arg url "$URL" \
+        || { echo "install.sh: could not rewrite $SETTINGS; left untouched: $WRITE_ERR" >&2; exit 1; }
+      echo "CC_STATUSLINE_DIR_URL = $URL"
+      echo "written to $SETTINGS"
+      # A hand-made local file is not covered by the excludes Claude Code adds
+      # when it creates one, and this one names a host.
+      if [ "$SCOPE" = project ] && git -C "$PROJECT" rev-parse --git-dir >/dev/null 2>&1 \
+         && ! git -C "$PROJECT" check-ignore -q "$TARGET"; then
+        echo "warning: $SETTINGS is not ignored by git; add .claude/settings.local.json to .gitignore"
+      fi ;;
+    remove)
+      if ! jq -s -e '.[0].env.CC_STATUSLINE_DIR_URL != null' "$SRC" >/dev/null; then
+        echo "no CC_STATUSLINE_DIR_URL in $SETTINGS; nothing to remove"
+        exit 0
+      fi
+      write_settings '.[0] | del(.env.CC_STATUSLINE_DIR_URL) | if .env == {} then del(.env) else . end' \
+        || { echo "install.sh: could not rewrite $SETTINGS; left untouched: $WRITE_ERR" >&2; exit 1; }
+      echo "CC_STATUSLINE_DIR_URL removed from $SETTINGS" ;;
+    *) echo "install.sh: unknown editor '$ACTION' (expected vscode or remove)" >&2; exit 2 ;;
+  esac
+  exit 0
+fi
 
 if [ "$MODE" = remove ]; then
   if ! jq -s -e '.[0].statusLine != null' "$SRC" >/dev/null; then

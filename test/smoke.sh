@@ -16,7 +16,7 @@ SAMPLE="$SCRIPT_DIR/sample.json"
 # — a suite run inside a session inherits them without any shell doing it.
 unset CLAUDE_AUTOCOMPACT_PCT_OVERRIDE
 unset CLAUDE_CODE_AUTO_COMPACT_WINDOW
-unset CC_STATUSLINE_FORGE CC_STATUSLINE_WEB_PORT
+unset CC_STATUSLINE_FORGE CC_STATUSLINE_WEB_PORT CC_STATUSLINE_DIR_URL
 # Left on, a render spawns the real `claude`; the usage pass sets it per case.
 export CC_STATUSLINE_MODEL_USAGE=0
 
